@@ -64,28 +64,27 @@ def resolve_destination(source: Path, dest_dir: Path) -> tuple[Path, str]:
 
     Returns (dest_path, action) where action is one of:
       "copy"   — no filename conflict; proceed normally
-      "skip"   — same filename AND same file size already exists; assume
-                 duplicate and skip (source will still be removed from library)
-      "rename" — same filename but different size; dest_path has a
-                 "(potential duplicate N)" suffix to avoid clobbering
+      "skip"   — an archived file with this name (or one of its
+                 "(potential duplicate N)" variants) has identical contents
+                 (SHA-256); the source is already archived
+      "rename" — files with this name exist but none has identical contents;
+                 dest_path has a "(potential duplicate N)" suffix to avoid
+                 clobbering
     """
     candidate = dest_dir / source.name
-
     if not candidate.exists():
         return candidate, "copy"
 
-    if candidate.stat().st_size == source.stat().st_size:
-        return candidate, "skip"
-
-    # Different size — find a free rename slot
     stem = source.stem
     suffix = source.suffix
-    n = 1
-    while True:
-        renamed = dest_dir / f"{stem} (potential duplicate {n}){suffix}"
-        if not renamed.exists():
-            return renamed, "rename"
+    n = 0
+    while candidate.exists():
+        # Size is a cheap pre-check; only hash when sizes match.
+        if candidate.stat().st_size == source.stat().st_size and verify_copy(source, candidate):
+            return candidate, "skip"
         n += 1
+        candidate = dest_dir / f"{stem} (potential duplicate {n}){suffix}"
+    return candidate, "rename"
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +121,7 @@ def copy_and_verify(source: Path, dest_dir: Path) -> dict:
 
         if resolution == "skip":
             result["action"] = "skipped"
-            result["verified"] = True   # existing copy assumed good
+            result["verified"] = True   # existing copy has identical SHA-256
             result["deleted"] = False   # caller handles library removal
             return result
 
@@ -201,7 +200,7 @@ def main():
     errors = []
     # Paths confirmed safe in destination — written to tracks_to_remove file
     # for the subsequent remove_library phase.
-    # Includes: copied+verified, renamed+verified, skipped (same size = already there).
+    # Includes: copied+verified, renamed+verified, skipped (identical copy already archived).
     ready_to_remove: list[str] = []
 
     for i, row in enumerate(targets, 1):

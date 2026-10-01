@@ -23,6 +23,8 @@ from mutagen.id3 import (
 )
 from mutagen.mp4 import MP4
 from mutagen.flac import FLAC
+from mutagen.wave import WAVE
+from mutagen.aiff import AIFF
 
 from . import config
 
@@ -39,10 +41,16 @@ def current_tags(path: Path) -> dict:
     ext = path.suffix.lower()
     try:
         if ext in {".mp3", ".wav", ".aif", ".aiff"}:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                return result
+            if ext == ".mp3":
+                try:
+                    tags = ID3(str(path))
+                except ID3NoHeaderError:
+                    return result
+            else:
+                # WAV/AIFF keep ID3 tags in a chunk inside the container
+                tags = _container_class(ext)(str(path)).tags
+                if tags is None:
+                    return result
             result["artist"] = str(tags.get("TPE1", ""))
             result["title"]  = str(tags.get("TIT2", ""))
             result["album"]  = str(tags.get("TALB", ""))
@@ -86,8 +94,10 @@ def write_tags_to_file(
     result = {"ok": False, "error": None}
     ext = path.suffix.lower()
     try:
-        if ext in {".mp3", ".wav", ".aif", ".aiff"}:
+        if ext == ".mp3":
             _write_id3(path, new_artist, new_title, clear_album, new_genre)
+        elif ext in {".wav", ".aif", ".aiff"}:
+            _write_container_id3(path, new_artist, new_title, clear_album, new_genre)
         elif ext == ".m4a":
             _write_mp4(path, new_artist, new_title, clear_album, new_genre)
         elif ext == ".flac":
@@ -101,11 +111,11 @@ def write_tags_to_file(
     return result
 
 
-def _write_id3(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
-    try:
-        tags = ID3(str(path))
-    except ID3NoHeaderError:
-        tags = ID3()
+def _container_class(ext: str):
+    return WAVE if ext == ".wav" else AIFF
+
+
+def _apply_id3_frames(tags, new_artist: str, new_title: str, clear_album: bool, new_genre: str) -> None:
     if new_artist:
         tags.add(TPE1(encoding=3, text=[new_artist]))
     if new_title:
@@ -114,7 +124,25 @@ def _write_id3(path: Path, new_artist: str, new_title: str, clear_album: bool, n
         tags.add(TALB(encoding=3, text=[""]))
     if new_genre:
         tags.add(TCON(encoding=3, text=[new_genre]))
+
+
+def _write_id3(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
+    try:
+        tags = ID3(str(path))
+    except ID3NoHeaderError:
+        tags = ID3()
+    _apply_id3_frames(tags, new_artist, new_title, clear_album, new_genre)
     tags.save(str(path))
+
+
+def _write_container_id3(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
+    # Saving a bare ID3 object would prepend an ID3 header and destroy the
+    # RIFF/FORM container; WAVE/AIFF write the tags into their own ID3 chunk.
+    audio = _container_class(path.suffix.lower())(str(path))
+    if audio.tags is None:
+        audio.add_tags()
+    _apply_id3_frames(audio.tags, new_artist, new_title, clear_album, new_genre)
+    audio.save()
 
 
 def _write_mp4(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
@@ -155,7 +183,11 @@ def parse_fixes_tsv(tsv_path: Path) -> list[dict]:
     Parse a fixes TSV file (same format as phase4_fixes.tsv).
     Returns a list of dicts with keys: filepath, new_artist, new_title,
     clear_album, new_genre. The new_genre column is optional.
-    Skips blank lines and lines starting with #.
+    Skips blank lines, lines starting with #, and a header row.
+
+    Raises ValueError if the file is a preview TSV written by a dry run:
+    its columns are in a different order, so treating it as input would
+    write current values into the wrong tags.
     """
     rows = []
     with open(tsv_path, encoding="utf-8") as f:
@@ -164,6 +196,13 @@ def parse_fixes_tsv(tsv_path: Path) -> list[dict]:
             if not line or line.startswith("#"):
                 continue
             parts = line.split("\t")
+            if parts[0].strip().lower() == "filepath":
+                if "current_artist" in (c.strip().lower() for c in parts):
+                    raise ValueError(
+                        f"{tsv_path} is a dry-run preview, not a fixes file. "
+                        "Edit your original fixes TSV and run --execute on that."
+                    )
+                continue  # header row
             if len(parts) < 4:
                 continue
             rows.append({
@@ -253,7 +292,11 @@ def main():
                         help="Directory for preview TSV (default: LOG_DIR)")
     args = parser.parse_args()
 
-    fixes = parse_fixes_tsv(args.input)
+    try:
+        fixes = parse_fixes_tsv(args.input)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     if not args.execute:
         preview = generate_preview_tsv(fixes, args.output.expanduser())

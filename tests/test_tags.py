@@ -5,7 +5,9 @@ Uses real on-disk audio files created with mutagen — no mocking.
 """
 
 import csv
+import struct
 import sys
+import wave
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,45 @@ import itunes_cleanup.fix_tags as fix_tags
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+AUDIO_FRAMES = bytes(range(256)) * 8   # recognisable, non-silent sample data
+
+
+def make_wav(path: Path) -> Path:
+    """Create a minimal valid PCM WAV file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(AUDIO_FRAMES)
+    return path
+
+
+def make_aiff(path: Path) -> Path:
+    """Create a minimal valid AIFF file (FORM container with COMM + SSND)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frames = len(AUDIO_FRAMES) // 2
+    # 80-bit IEEE extended float for 8000 Hz
+    rate = b"\x40\x0b\xfa\x00\x00\x00\x00\x00\x00\x00"
+    comm = b"COMM" + struct.pack(">IhIh", 18, 1, frames, 16) + rate
+    ssnd = b"SSND" + struct.pack(">III", 8 + len(AUDIO_FRAMES), 0, 0) + AUDIO_FRAMES
+    body = b"AIFF" + comm + ssnd
+    path.write_bytes(b"FORM" + struct.pack(">I", len(body)) + body)
+    return path
+
+
+def aiff_sound_data(path: Path) -> bytes:
+    """Return the raw sample bytes from an AIFF file's SSND chunk."""
+    data = path.read_bytes()
+    assert data[:4] == b"FORM" and data[8:12] == b"AIFF"
+    pos = 12
+    while pos < len(data):
+        cid, size = data[pos:pos + 4], struct.unpack(">I", data[pos + 4:pos + 8])[0]
+        if cid == b"SSND":
+            return data[pos + 16:pos + 8 + size]
+        pos += 8 + size + (size & 1)
+    raise AssertionError("no SSND chunk")
 
 def make_mp3(path: Path, artist="", title="", album="", genre="") -> Path:
     """Create a minimal MP3 file with ID3 tags at path."""
@@ -131,6 +172,21 @@ class TestParseTsv:
         ])
         assert fix_tags.parse_fixes_tsv(tsv)[0]["new_genre"] == "House"
 
+    def test_skips_plain_header_row(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("filepath\tnew_artist\tnew_title\tclear_album\n/a/b/track.mp3\tA\tT\t1\n")
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert [r["filepath"] for r in rows] == ["/a/b/track.mp3"]
+
+    def test_rejects_preview_file_as_input(self, tmp_path):
+        # Regression: a preview TSV used to be parsed positionally, writing
+        # the new artist into the title and dropping clear_album.
+        fixes = [{"filepath": "/a/track.mp3", "new_artist": "New Artist",
+                  "new_title": "New Title", "clear_album": "1"}]
+        preview = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        with pytest.raises(ValueError, match="preview"):
+            fix_tags.parse_fixes_tsv(preview)
+
     def test_skips_blank_lines(self, tmp_path):
         tsv = tmp_path / "fixes.tsv"
         tsv.write_text("/a/b/track.mp3\tArtist\tTitle\t1\n\n/c/d/other.mp3\tX\tY\t0\n")
@@ -239,6 +295,38 @@ class TestWriteTagsMP3:
         p.write_bytes(b"data")
         result = fix_tags.write_tags_to_file(p, "A", "T", False)
         assert result["ok"] is False
+
+
+class TestWriteTagsWavAiff:
+    """Regression: WAV/AIFF used to be saved with the bare MP3 ID3 writer,
+    which replaced the RIFF/FORM header and made the files unreadable."""
+
+    def test_wav_stays_valid_with_audio_unchanged(self, tmp_path):
+        path = make_wav(tmp_path / "bounce.wav")
+        result = fix_tags.write_tags_to_file(path, "Some Artist", "Some Track", True, "House")
+        assert result["ok"] is True
+        assert path.read_bytes()[:4] == b"RIFF"
+        with wave.open(str(path)) as w:
+            assert w.readframes(w.getnframes()) == AUDIO_FRAMES
+
+    def test_wav_tags_written_and_read_back(self, tmp_path):
+        path = make_wav(tmp_path / "bounce.wav")
+        fix_tags.write_tags_to_file(path, "Some Artist", "Some Track", False, "House")
+        tags = fix_tags.current_tags(path)
+        assert tags["artist"] == "Some Artist"
+        assert tags["title"]  == "Some Track"
+        assert tags["genre"]  == "House"
+
+    def test_aiff_stays_valid_with_audio_unchanged(self, tmp_path):
+        path = make_aiff(tmp_path / "bounce.aiff")
+        result = fix_tags.write_tags_to_file(path, "Some Artist", "Some Track", True)
+        assert result["ok"] is True
+        assert aiff_sound_data(path) == AUDIO_FRAMES
+
+    def test_aif_extension_tags_read_back(self, tmp_path):
+        path = make_aiff(tmp_path / "bounce.aif")
+        fix_tags.write_tags_to_file(path, "Some Artist", "", False)
+        assert fix_tags.current_tags(path)["artist"] == "Some Artist"
 
 
 # ---------------------------------------------------------------------------

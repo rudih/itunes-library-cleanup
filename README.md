@@ -150,8 +150,8 @@ python archive.py --input audit.tsv --classes voice_memo,long_audio --execute
 4. If hashes don't match: leave source untouched, log error
 
 **Duplicate handling:**
-- Same filename + same size → skip (treated as already archived; contents are **not** compared — see Known Issues)
-- Same filename + different size → rename destination with suffix, archive both
+- Same filename + identical contents (SHA-256) → skip (already archived)
+- Same filename + different contents → archive under a `(potential duplicate N)` name, so both are kept
 
 **Output:** `summary_YYYYMMDD_HHMMSS.txt` + appended `run_log.tsv`
 
@@ -198,9 +198,9 @@ filepath                           | new_artist      | new_title | clear_album |
 
 See `docs/examples/phase4_fixes.tsv` for a template.
 
-> **Don't use the preview file as `--execute` input.** It has extra columns and will write the wrong values. Edit and re-run your original input file instead.
->
-> **MP3, M4A and FLAC only for now.** Writing tags to WAV or AIFF files currently damages them (known issue).
+> **Run `--execute` on your fixes file, not the preview.** The preview has extra columns for review only; `fix_tags.py` refuses to use it as input.
+
+Supported formats: MP3, M4A, FLAC, WAV and AIFF.
 
 ### Phase 5: Summary & Logging
 
@@ -317,7 +317,7 @@ You don't need to remove a category from the code. Pass `--classes` to `archive.
 | **Hash Verification** | Each archive copy is checked with SHA-256 before the original is deleted. If the hashes don't match, the original is left untouched. |
 | **Archive Before Delete** | Phase 2 deletes an original only after a verified copy exists in the archive. Phase 3 moves files to the Trash rather than deleting them. |
 | **Dry-Run by Default** | Every phase that changes files or your library needs an explicit `--execute` flag. |
-| **Skip Already-Archived Files** | A file whose name and size match one already in the archive is skipped (contents are not compared). |
+| **Skip Already-Archived Files** | A file is skipped only if the archive already holds a copy with identical contents (SHA-256). Same name, different contents → both are kept. |
 | **Phase Independence** | Run phases individually or in sequence. |
 | **Human Inspection** | Audit reports are TSV files — inspect, filter and edit them in Excel/Numbers before executing. |
 
@@ -373,8 +373,7 @@ Priority 6: clean            → None of the above — leave in library
 - **Music.app dependency** — Phase 3 (remove from library) requires Music.app running.
 - **No Music.app needed** — Phases 1, 2, and 4 work without Music.app open.
 - **iTunes XML export** — Optional; library scanning uses file system directly.
-- **Duplicate detection by filename** — Uses filename + size, not file contents or audio fingerprinting. Two different files with the same name and size are treated as the same file: the second is skipped, left out of the archive, and still listed for removal in phase 3. Check the `tracks_to_remove` list before running phase 3.
-- **Tag fixing on WAV/AIFF** — Not supported yet; writing tags to these files damages them. Use phase 4 on MP3, M4A and FLAC only.
+- **Not a duplicate-song finder** — Archive collisions are checked by exact file contents, so different encodes or edits of the same song are treated as different files. There's no audio fingerprinting.
 - **iCloud Music Library / Sync Library** — Not tested. Deleting from your library may also remove items from other devices.
 - **Heuristic classification** — Long duration, filename keywords and folder names are signals, not proof. Genuine music can be flagged, so review the audit before archiving, and pass `--classes` to archive only the categories you've checked.
 
@@ -425,7 +424,7 @@ A: The audit classifies these as `bounce`: files in a `Production Bounces` folde
 A: Any track of 10 minutes or more is classified as `long_audio`. Change `LONG_AUDIO_THRESHOLD_MINUTES` to adjust the cut-off, and add genuine long tracks to `MANUAL_OVERRIDES` to keep them.
 
 **Q: How do I fix artist or album tags that show a website URL?**  
-A: The audit flags these in the `dirty_tag` column. List the corrections in a TSV (see `docs/examples/phase4_fixes.tsv`) and run `python fix_tags.py`. It previews the changes first and only writes tags with `--execute`. MP3, M4A and FLAC files only for now.
+A: The audit flags these in the `dirty_tag` column. List the corrections in a TSV (see `docs/examples/phase4_fixes.tsv`) and run `python fix_tags.py`. It previews the changes first and only writes tags with `--execute`.
 
 **Q: Does it work with the Music app, or only old iTunes?**  
 A: Phase 3 scripts the Music app, so it needs macOS 10.15 (Catalina) or later. Phases 1, 2 and 4 work on the library files directly, so they don't depend on which app you use.

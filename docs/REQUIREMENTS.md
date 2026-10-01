@@ -97,7 +97,7 @@ Input: audit report (or filtered subset, e.g. `--classes voice_memo,long_audio`)
 ### Phase 4 — Fix Tags (`fix_tags.py`)
 - Input: a TSV file with columns `filepath | new_artist | new_title | clear_album`, plus an optional `new_genre` column
   (same format as existing `phase4_fixes.tsv`)
-- **Dry-run mode** (default, no flag): writes a preview TSV (`fix_tags_preview_YYYYMMDD_HHMMSS.tsv`) showing current tags alongside proposed changes without modifying any files. The preview is for review only — it has extra columns and must not be passed to `--execute`; edit the original input file instead.
+- **Dry-run mode** (default, no flag): writes a preview TSV (`fix_tags_preview_YYYYMMDD_HHMMSS.tsv`) showing current tags alongside proposed changes without modifying any files. The preview is for review only — it has extra columns and must not be passed to `--execute` (fix_tags.py refuses it); edit the original input file instead.
 - **Execute mode** (`--execute`): writes corrected tags directly to files via `mutagen`; clears the `album` field when `clear_album == 1`, and sets `genre` only when `new_genre` is given
 - Does NOT require Music.app to be running
 
@@ -160,7 +160,7 @@ LOG_DIR = "~/Music/Archive/logs"
 - Verify source vs destination with one byte changed → returns `False`
 - Missing destination file → returns `False` (no exception bubbles up)
 - Zero-byte file → copies and verifies correctly
-- Duplicate detection: same filename + same size → skip decision returned
+- Duplicate detection: same filename + identical contents → skip; same filename + different contents (even if same size) → rename
 - Duplicate detection: same filename + different size → rename-with-suffix decision returned
 
 ### `tests/test_tags.py`
@@ -196,7 +196,7 @@ python remove_library.py --input tracks_to_remove.txt [--execute]
 
 | Package | Purpose |
 |---|---|
-| `mutagen` | Read/write audio tags (MP3, M4A, FLAC, AIFF) |
+| `mutagen` | Read/write audio tags (MP3, M4A, FLAC, WAV, AIFF) |
 | `pytest` | Test runner |
 | Standard library only otherwise | `hashlib`, `shutil`, `pathlib`, `csv`, `subprocess`, `datetime`, `argparse` |
 
@@ -207,7 +207,7 @@ No third-party HTTP clients, no MusicBrainz, no external API calls.
 ## 9. Non-Functional Requirements
 
 - **Safety first:** no source file is ever deleted without a verified SHA-256 hash match
-- **Re-runs:** running archive twice on the same input skips files already archived (matched by filename and size, not contents)
+- **Re-runs:** running archive twice on the same input skips files already archived (identical contents, checked by SHA-256)
 - **Explicit execution:** destructive phases require `--execute`; default is always a dry-run or preview
 - **macOS only** for `remove_library` phase; all other phases are platform-agnostic
 - **No Music.app dependency** for audit, archive, or fix_tags phases

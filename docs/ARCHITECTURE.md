@@ -220,11 +220,12 @@ for each row in audit.tsv:
 
 | Scenario | Decision |
 |----------|----------|
-| Same filename + same size | Skip (assume duplicate already archived) |
-| Same filename + different size | Rename destination with suffix `(potential duplicate N)` |
+| Same filename + identical contents (SHA-256) | Skip (already archived) |
+| Same filename + different contents | Rename destination with suffix `(potential duplicate N)` |
+| Matches an existing `(potential duplicate N)` copy | Skip (already archived on a previous run) |
 | Different filename | Proceed normally |
 
-**Rationale:** Filename + size is a lightweight duplicate detector. Different edits of the same song will have different sizes. Fingerprinting could be added in a future version.
+**Rationale:** Size is checked first as a cheap filter; files are only hashed when name and size both match. A skip therefore always means an identical copy exists in the archive, which makes it safe to list the source for library removal. Audio fingerprinting (different encodes of the same song) could be added in a future version.
 
 ### Verification: SHA-256 Hash
 
@@ -360,7 +361,7 @@ from mutagen.flac import FLAC
 from mutagen.aiff import AIFF
 ```
 
-Supported formats: MP3 (ID3), MP4/M4A (iTunes atoms), FLAC (Vorbis). WAV and AIFF are currently written with the MP3 ID3 writer, which damages those files — do not run tag fixes on them (known issue).
+Supported formats: MP3 (ID3), MP4/M4A (iTunes atoms), FLAC (Vorbis), WAV and AIFF (ID3 chunk inside the RIFF/FORM container, written via mutagen's `WAVE`/`AIFF` classes so the container and audio data are preserved).
 
 ### Tag Writing
 

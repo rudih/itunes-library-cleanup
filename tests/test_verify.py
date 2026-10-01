@@ -108,6 +108,25 @@ class TestResolveDestination:
         assert action == "skip"
         assert path == existing
 
+    def test_same_name_same_size_different_content_returns_rename(self, tmp_path):
+        # Regression: same name + size used to be skipped without comparing
+        # contents, so the second file was never archived but still queued
+        # for removal from the library.
+        src = write(tmp_path / "source" / "track.mp3", b"BBBB")
+        write(tmp_path / "dest" / "track.mp3", b"AAAA")
+        path, action = resolve_destination(src, tmp_path / "dest")
+        assert action == "rename"
+        assert path.name == "track (potential duplicate 1).mp3"
+
+    def test_identical_to_existing_renamed_copy_returns_skip(self, tmp_path):
+        # Re-running after a rename must not archive a third copy
+        src = write(tmp_path / "source" / "track.mp3", b"BBBB")
+        write(tmp_path / "dest" / "track.mp3", b"AAAA")
+        existing = write(tmp_path / "dest" / "track (potential duplicate 1).mp3", b"BBBB")
+        path, action = resolve_destination(src, tmp_path / "dest")
+        assert action == "skip"
+        assert path == existing
+
     def test_same_name_different_size_returns_rename(self, tmp_path):
         src      = write(tmp_path / "source" / "track.mp3", b"version 2 longer")
         _        = write(tmp_path / "dest"   / "track.mp3", b"v1")
@@ -160,6 +179,15 @@ class TestCopyAndVerify:
         assert result["action"]  == "skipped"
         assert result["deleted"] is False
         assert src.exists()   # source preserved — library removal handles this
+
+    def test_same_size_different_content_is_archived_not_skipped(self, tmp_path):
+        src = write(tmp_path / "source" / "track.mp3", b"BBBB")
+        write(tmp_path / "dest" / "track.mp3", b"AAAA")
+        result = copy_and_verify(src, tmp_path / "dest")
+        assert result["action"] == "renamed"
+        assert result["verified"] is True
+        assert result["dest"].read_bytes() == b"BBBB"
+        assert (tmp_path / "dest" / "track.mp3").read_bytes() == b"AAAA"  # untouched
 
     def test_rename_copies_with_new_name(self, tmp_path):
         src = write(tmp_path / "source" / "aug test 1.mp3", b"longer version")

@@ -209,6 +209,7 @@ def scan_library(library_root: Path) -> list[dict]:
             tags["artist"],
             tags["album"],
             tags["duration_s"],
+            library_root=library_root,
         )
         dirty = _is_dirty_tag(tags["artist"], tags["album"])
 

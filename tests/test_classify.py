@@ -363,3 +363,20 @@ class TestDirtyTag:
         )
         assert cls == "long_audio"
         assert audit._is_dirty_tag("", "www.blogsite.com") is True
+
+
+# ---------------------------------------------------------------------------
+# Library scan
+# ---------------------------------------------------------------------------
+
+class TestScanLibrary:
+    def test_folder_rules_use_scanned_root(self, tmp_path):
+        # Regression: scan_library() didn't pass its root to classify(), so
+        # folder-relative rules (own artist folders, Unknown Artist patterns)
+        # were checked against config.LIBRARY_ROOT instead of --library.
+        root = tmp_path / "Other Library"
+        track = root / "Test Artist" / "Unknown Album" / "Work In Progress.mp3"
+        track.parent.mkdir(parents=True)
+        track.write_bytes(b"\x00" * 128)
+        rows = audit.scan_library(root)
+        assert [r["classification"] for r in rows] == ["bounce"]
