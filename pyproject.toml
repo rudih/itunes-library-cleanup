@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "itunes-cleanup"
+version = "0.3.0"
+description = "Safe, tested Python tool to clean up your iTunes/Apple Music library"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Rudi Hoppe"},
+]
+keywords = ["itunes", "apple music", "library", "cleanup", "audio", "metadata"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: MacOS",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio",
+]
+requires-python = ">=3.9"
+dependencies = [
+    "mutagen>=1.45.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/rudih/itunes_cleanup"
+Documentation = "https://github.com/rudih/itunes_cleanup/tree/main/docs"
+Repository = "https://github.com/rudih/itunes_cleanup.git"
+Issues = "https://github.com/rudih/itunes_cleanup/issues"
+
+[project.scripts]
+itunes-cleanup = "itunes_cleanup.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages]
+find = {where = ["src"]}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--verbose"
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+source = ["src/itunes_cleanup"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]

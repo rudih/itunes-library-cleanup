@@ -1,0 +1,16 @@
+# filepath	new_artist	new_title	clear_album
+# Rules:
+#   new_artist / new_title: empty = leave unchanged
+#   clear_album: 1 = set album="" and genre="Dance"
+#
+# Replace the paths below with real files from your audit report.
+#
+# --- Artist tag is a download site; real artist is in the title ---
+/Users/yourname/Music/Music/iTunes/iTunes Media/Music/example-mp3s.com/example-mp3s.com/Some Artist - First Track (Original Mix).mp3	Some Artist	First Track (Original Mix)	1
+/Users/yourname/Music/Music/iTunes/iTunes Media/Music/example-mp3s.com/example-mp3s.com/Second Track (Club Edit) [example-mp3s.com].mp3	Another Artist	Second Track (Club Edit)	1
+#
+# --- Artist is fine; only the album tag holds a URL ---
+/Users/yourname/Music/Music/iTunes/iTunes Media/Music/Good Artist/http___example-blog.blogspot.com_/Good Artist - Third Track.mp3		Third Track	1
+#
+# --- Only clear the album, leave artist and title alone ---
+/Users/yourname/Music/Music/iTunes/iTunes Media/Music/Fine Artist/www.example-promo.net/Fourth Track.mp3			1

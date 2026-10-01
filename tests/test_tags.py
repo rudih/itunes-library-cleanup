@@ -1,0 +1,299 @@
+"""
+tests/test_tags.py — Tests for tag parsing, writing, and dirty-tag detection.
+
+Uses real on-disk audio files created with mutagen — no mocking.
+"""
+
+import csv
+import sys
+from pathlib import Path
+
+import pytest
+from mutagen.id3 import ID3, ID3NoHeaderError, TIT2, TPE1, TALB, TCON
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+import itunes_cleanup.audit as audit
+import itunes_cleanup.fix_tags as fix_tags
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def make_mp3(path: Path, artist="", title="", album="", genre="") -> Path:
+    """Create a minimal MP3 file with ID3 tags at path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\x00" * 128)
+    tags = ID3()
+    if artist: tags.add(TPE1(encoding=3, text=[artist]))
+    if title:  tags.add(TIT2(encoding=3, text=[title]))
+    if album:  tags.add(TALB(encoding=3, text=[album]))
+    if genre:  tags.add(TCON(encoding=3, text=[genre]))
+    tags.save(str(path))
+    return path
+
+
+def read_id3(path: Path) -> dict:
+    """Read raw ID3 tags back from a file."""
+    tags = ID3(str(path))
+    return {
+        "artist": str(tags.get("TPE1", "")),
+        "title":  str(tags.get("TIT2", "")),
+        "album":  str(tags.get("TALB", "")),
+        "genre":  str(tags.get("TCON", "")),
+    }
+
+
+def write_tsv(path: Path, rows: list[dict]) -> Path:
+    """Write a fixes TSV for use as test input."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        for row in rows:
+            f.write("\t".join([
+                row.get("filepath", ""),
+                row.get("new_artist", ""),
+                row.get("new_title", ""),
+                row.get("clear_album", "0"),
+            ]) + "\n")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Dirty tag detection (URL patterns in artist / album fields)
+# ---------------------------------------------------------------------------
+
+class TestDirtyTagDetection:
+    """
+    Focused dirty-tag tests from the fix_tags perspective — the patterns we
+    actually encounter in phase4_fixes.tsv and the audit report.
+    """
+
+    def test_blogspot_in_artist(self):
+        assert audit._is_dirty_tag("http___example-music.blogspot.com_", "") is True
+
+    def test_dotcom_site_in_album(self):
+        assert audit._is_dirty_tag("Some Artist", "ExampleTracks.com") is True
+
+    def test_uk_site_in_album(self):
+        assert audit._is_dirty_tag("Some Artist", "EXAMPLE-DJ.UK") is True
+
+    def test_http_url_in_album(self):
+        assert audit._is_dirty_tag("Some Artist", "http://example-mp3s.blogspot.com") is True
+
+    def test_at_prefix_blog_in_album(self):
+        assert audit._is_dirty_tag("Another Artist", "@example-dj.blogspot.com") is True
+
+    def test_clean_artist_and_album(self):
+        assert audit._is_dirty_tag("Some Artist", "Some Album") is False
+
+    def test_empty_both_fields(self):
+        assert audit._is_dirty_tag("", "") is False
+
+    def test_very_long_url_in_album(self):
+        long_url = "http_" + "_" * 200 + ".blogspot.com"
+        assert audit._is_dirty_tag("", long_url) is True
+
+    def test_non_ascii_clean_tag(self):
+        assert audit._is_dirty_tag("Björk", "Homogenic") is False
+
+    def test_non_ascii_with_url(self):
+        assert audit._is_dirty_tag("Ëlite", "www.downloadsite.net") is True
+
+
+# ---------------------------------------------------------------------------
+# TSV parsing
+# ---------------------------------------------------------------------------
+
+class TestParseTsv:
+    def test_parses_four_fields(self, tmp_path):
+        tsv = write_tsv(tmp_path / "fixes.tsv", [
+            {"filepath": "/a/b/track.mp3", "new_artist": "Solid Snake",
+             "new_title": "Automation Monster Part II", "clear_album": "1"},
+        ])
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert len(rows) == 1
+        assert rows[0]["filepath"]    == "/a/b/track.mp3"
+        assert rows[0]["new_artist"]  == "Solid Snake"
+        assert rows[0]["new_title"]   == "Automation Monster Part II"
+        assert rows[0]["clear_album"] == "1"
+
+    def test_skips_blank_lines(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("/a/b/track.mp3\tArtist\tTitle\t1\n\n/c/d/other.mp3\tX\tY\t0\n")
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert len(rows) == 2
+
+    def test_skips_comment_lines(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("# This is a comment\n/a/b/track.mp3\tArtist\tTitle\t1\n")
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert len(rows) == 1
+
+    def test_skips_rows_with_fewer_than_four_fields(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("/a/b/track.mp3\tArtist\tTitle\n")  # only 3 fields
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert len(rows) == 0
+
+    def test_empty_artist_field_allowed(self, tmp_path):
+        tsv = write_tsv(tmp_path / "fixes.tsv", [
+            {"filepath": "/a/b.mp3", "new_artist": "", "new_title": "Title", "clear_album": "1"},
+        ])
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert rows[0]["new_artist"] == ""
+
+    def test_non_ascii_in_fields(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("/a/Björk.mp3\tBjörk\tJóga\t0\n", encoding="utf-8")
+        rows = fix_tags.parse_fixes_tsv(tsv)
+        assert rows[0]["new_artist"] == "Björk"
+        assert rows[0]["new_title"]  == "Jóga"
+
+    def test_multiple_rows_parsed_in_order(self, tmp_path):
+        rows_in = [
+            {"filepath": f"/track{i}.mp3", "new_artist": f"Artist{i}",
+             "new_title": f"Title{i}", "clear_album": "0"}
+            for i in range(5)
+        ]
+        tsv = write_tsv(tmp_path / "fixes.tsv", rows_in)
+        rows_out = fix_tags.parse_fixes_tsv(tsv)
+        assert [r["new_artist"] for r in rows_out] == [f"Artist{i}" for i in range(5)]
+
+
+# ---------------------------------------------------------------------------
+# Tag writing — MP3 (ID3)
+# ---------------------------------------------------------------------------
+
+class TestWriteTagsMP3:
+    def test_writes_new_artist(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", artist="http___dirty.com", title="Track")
+        fix_tags.write_tags_to_file(path, new_artist="Clean Artist", new_title="", clear_album=False)
+        assert read_id3(path)["artist"] == "Clean Artist"
+
+    def test_writes_new_title(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", title="Old Title")
+        fix_tags.write_tags_to_file(path, new_artist="", new_title="New Title", clear_album=False)
+        assert read_id3(path)["title"] == "New Title"
+
+    def test_clear_album_sets_empty_and_dance_genre(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", album="ExampleTracks.com", genre="")
+        fix_tags.write_tags_to_file(path, new_artist="", new_title="", clear_album=True)
+        after = read_id3(path)
+        assert after["album"] == ""
+        assert after["genre"] == "Dance"
+
+    def test_clear_album_false_leaves_album_unchanged(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", album="Original Album")
+        fix_tags.write_tags_to_file(path, new_artist="", new_title="", clear_album=False)
+        assert read_id3(path)["album"] == "Original Album"
+
+    def test_empty_new_artist_does_not_overwrite(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", artist="Keep Me")
+        fix_tags.write_tags_to_file(path, new_artist="", new_title="", clear_album=False)
+        assert read_id3(path)["artist"] == "Keep Me"
+
+    def test_empty_new_title_does_not_overwrite(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", title="Keep Me Too")
+        fix_tags.write_tags_to_file(path, new_artist="", new_title="", clear_album=False)
+        assert read_id3(path)["title"] == "Keep Me Too"
+
+    def test_non_ascii_artist_written_correctly(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3")
+        fix_tags.write_tags_to_file(path, new_artist="Björk", new_title="Jóga", clear_album=False)
+        after = read_id3(path)
+        assert after["artist"] == "Björk"
+        assert after["title"]  == "Jóga"
+
+    def test_returns_ok_true_on_success(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3")
+        result = fix_tags.write_tags_to_file(path, "Artist", "Title", True)
+        assert result["ok"] is True
+        assert result["error"] is None
+
+    def test_returns_ok_false_for_missing_file(self, tmp_path):
+        result = fix_tags.write_tags_to_file(tmp_path / "ghost.mp3", "A", "T", False)
+        assert result["ok"] is False
+        assert result["error"] is not None
+
+    def test_unsupported_extension_returns_error(self, tmp_path):
+        p = tmp_path / "file.xyz"
+        p.write_bytes(b"data")
+        result = fix_tags.write_tags_to_file(p, "A", "T", False)
+        assert result["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# Artist-title splitting heuristic
+# ---------------------------------------------------------------------------
+
+class TestSplitArtistFromTitle:
+    def test_splits_on_dash(self):
+        artist, title = fix_tags.split_artist_from_title("Solid Snake - Automation Monster Part II")
+        assert artist == "Solid Snake"
+        assert title  == "Automation Monster Part II"
+
+    def test_no_dash_returns_empty_artist(self):
+        artist, title = fix_tags.split_artist_from_title("Normal Title")
+        assert artist == ""
+        assert title  == "Normal Title"
+
+    def test_multiple_dashes_splits_on_first(self):
+        artist, title = fix_tags.split_artist_from_title("Ad Brown - Good Feeling - Chris Reece Remix")
+        assert artist == "Ad Brown"
+        assert title  == "Good Feeling - Chris Reece Remix"
+
+    def test_strips_whitespace(self):
+        artist, title = fix_tags.split_artist_from_title("  Artist  -  Title  ")
+        assert artist == "Artist"
+        assert title  == "Title"
+
+    def test_empty_string(self):
+        artist, title = fix_tags.split_artist_from_title("")
+        assert artist == ""
+        assert title  == ""
+
+    def test_non_ascii(self):
+        artist, title = fix_tags.split_artist_from_title("Sigur Rós - Ára bátur")
+        assert artist == "Sigur Rós"
+        assert title  == "Ára bátur"
+
+
+# ---------------------------------------------------------------------------
+# Preview TSV generation
+# ---------------------------------------------------------------------------
+
+class TestGeneratePreviewTsv:
+    def test_creates_file_in_output_dir(self, tmp_path):
+        fixes = [{"filepath": "/a/track.mp3", "new_artist": "X", "new_title": "Y", "clear_album": "1"}]
+        out = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        previews = list(tmp_path.glob("fix_tags_preview_*.tsv"))
+        assert len(previews) == 1
+
+    def test_preview_contains_expected_columns(self, tmp_path):
+        fixes = [{"filepath": "/a/track.mp3", "new_artist": "X", "new_title": "Y", "clear_album": "1"}]
+        out = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        rows = list(csv.DictReader(open(out), delimiter="\t"))
+        assert set(fix_tags.PREVIEW_FIELDNAMES).issubset(set(rows[0].keys()))
+
+    def test_preview_shows_proposed_new_artist(self, tmp_path):
+        fixes = [{"filepath": "/a/track.mp3", "new_artist": "Clean Artist",
+                  "new_title": "", "clear_album": "0"}]
+        out = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        rows = list(csv.DictReader(open(out), delimiter="\t"))
+        assert rows[0]["new_artist"] == "Clean Artist"
+
+    def test_preview_shows_current_tags_for_existing_file(self, tmp_path):
+        mp3 = make_mp3(tmp_path / "track.mp3", artist="Dirty.com", album="Blog.net")
+        fixes = [{"filepath": str(mp3), "new_artist": "Clean", "new_title": "", "clear_album": "1"}]
+        out = fix_tags.generate_preview_tsv(fixes, tmp_path / "logs")
+        rows = list(csv.DictReader(open(out), delimiter="\t"))
+        assert rows[0]["current_artist"] == "Dirty.com"
+        assert rows[0]["current_album"]  == "Blog.net"
+
+    def test_preview_handles_missing_file_gracefully(self, tmp_path):
+        fixes = [{"filepath": "/nonexistent/track.mp3", "new_artist": "X",
+                  "new_title": "Y", "clear_album": "1"}]
+        out = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        rows = list(csv.DictReader(open(out), delimiter="\t"))
+        assert rows[0]["current_artist"] == ""
