@@ -126,8 +126,6 @@ By contributing, you agree that your code is licensed under the MIT License (see
 ## Questions?
 
 - **Issues:** Open a [GitHub issue](https://github.com/rudih/itunes_cleanup/issues)
-- **Discussions:** Start a [GitHub discussion](https://github.com/rudih/itunes_cleanup/discussions)
-- **Email:** See MAINTAINERS.md (coming soon)
 
 ---
 

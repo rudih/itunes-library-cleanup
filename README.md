@@ -1,4 +1,4 @@
-# iTunes Cleanup
+# iTunes & Apple Music Library Cleanup
 
 **A safe, tested Python tool to clean up your iTunes/Apple Music library by removing production bounces, voice memos, long-form audio, and fixing URL-contaminated tags.**
 
@@ -399,6 +399,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## FAQ
 
+**Q: How do I remove voice memos from my iTunes or Apple Music library?**  
+A: Run `python audit.py` to find them, then `python archive.py --input audit.tsv --classes voice_memo --execute` to move them to an archive folder, then `python remove_library.py --input tracks_to_remove_YYYYMMDD_HHMMSS.txt --execute` to remove the entries from Music.app. Each step does a dry run first unless you pass `--execute`.
+
+**Q: How do I remove DAW bounces and production exports from Apple Music?**  
+A: The audit classifies these as `bounce`: files in a `Production Bounces` folder, LANDR exports, Unknown Artist files with version numbers (`v3`) or words like `rough` or `wip`, and WAV/AIFF files named `Track 01` or starting with a date. Archive them with `--classes bounce`. Add your artist name to `BOUNCE_ARTIST_FOLDERS` to catch bounces filed under your own name, and edit `BOUNCE_PRODUCTION_PATTERNS` to match your DAW's export names.
+
+**Q: How do I find long DJ mixes and podcasts in my iTunes library?**  
+A: Any track of 10 minutes or more is classified as `long_audio`. Change `LONG_AUDIO_THRESHOLD_MINUTES` to adjust the cut-off, and add genuine long tracks to `MANUAL_OVERRIDES` to keep them.
+
+**Q: How do I fix artist or album tags that show a website URL?**  
+A: The audit flags these in the `dirty_tag` column. List the corrections in a TSV (see `docs/examples/phase4_fixes.tsv`) and run `python fix_tags.py`. It previews the changes first and only writes tags with `--execute`.
+
+**Q: Does it work with the Music app, or only old iTunes?**  
+A: It works with the Music app on current macOS. The library files are scanned directly, so phases 1, 2 and 4 don't depend on which app you use.
+
 **Q: Is this safe?**  
 A: Yes. All destructive operations default to dry-run and require explicit `--execute`. Files are moved to Trash (recoverable) and verified via SHA-256 before deletion. Backup before you start, just in case.
 
@@ -418,8 +433,7 @@ A: Depends on library size. Phase 1 (audit) takes ~1-2 minutes for 4,000 tracks.
 
 ## Support
 
-- **Issues:** Found a bug? [Open an issue](https://github.com/rudih/itunes_cleanup/issues)
-- **Discussions:** Questions or ideas? [Start a discussion](https://github.com/rudih/itunes_cleanup/discussions)
+- **Issues:** Found a bug or have a question? [Open an issue](https://github.com/rudih/itunes_cleanup/issues)
 - **Incident Reports:** See [docs/](docs/) for detailed logs and incident analysis
 
 ---
