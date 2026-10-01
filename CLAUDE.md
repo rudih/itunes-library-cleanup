@@ -16,10 +16,10 @@ archive-not-delete throughout. Developed against a real, long-lived personal lib
 ## Commands
 
 ```bash
-python3 audit.py                      # scan library, produce classification report
-python3 archive.py                    # dry-run by default; --execute to act
-python3 fix_tags.py                   # clean URL-contaminated artist/album tags
-python3 remove_library.py --execute   # remove archived entries from Music.app index
+python3 audit.py                                   # read-only scan → audit_*.tsv in LOG_DIR
+python3 archive.py --input audit.tsv               # dry-run; add --classes X,Y and --execute to act
+python3 fix_tags.py --input fixes.tsv              # dry-run → preview TSV; --execute writes tags
+python3 remove_library.py --input tracks_to_remove_*.txt   # dry-run; --execute removes from Music.app
 pytest
 ```
 

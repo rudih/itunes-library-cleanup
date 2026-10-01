@@ -1,14 +1,14 @@
 # Architecture: 5-Phase iTunes Library Cleanup
 
-This document explains the design philosophy, phase workflow, classification rules, and safety patterns used in `itunes_cleanup`.
+This document explains the design philosophy, phase workflow, classification rules, and safety patterns used in iTunes Library Cleanup (Python package `itunes_cleanup`).
 
 ---
 
 ## Design Principles
 
-1. **Phase Separation** — Each phase is independent and idempotent. Can run phase 1 → phase 2 → phase 4, skipping phase 3. No forced order.
+1. **Phase Separation** — Each phase is independent. Can run phase 1 → phase 2 → phase 4, skipping phase 3. No forced order.
 2. **Human Inspection** — Data flows through TSV files. Users can inspect, filter, edit, and re-run with confidence.
-3. **Safety First** — All destructive operations default to dry-run. Explicit `--execute` required. Hash verification before deletion. Trash-not-delete.
+3. **Safety First** — All destructive operations default to dry-run. Explicit `--execute` required. Hash verification before deletion. Phase 3 moves files to the Trash; phase 2 deletes originals permanently once their archive copy is verified.
 4. **Filesystem Truth** — Direct file traversal + mutagen for ground truth, not iTunes XML (which can become stale).
 5. **Comprehensive Logging** — Every run is logged. Audit trail persists in `run_log.tsv`.
 
@@ -29,12 +29,12 @@ This document explains the design philosophy, phase workflow, classification rul
 ┌──────────────────────────────────────────────────────────┐
 │ Phase 2: ARCHIVE                                        │
 │ Input:  audit.tsv (filter by --classes)                │
-│ Output: summary_*.txt + tracks_to_remove_*.txt          │
+│ Output: tracks_to_remove_*.txt                          │
 │ Role:   Copy → SHA-256 verify → delete                  │
 │ Time:   ~5-10 min per 500 files (disk-dependent)       │
 │ Safety: ✓ Hash verification before deletion             │
 │         ✓ Duplicate detection + rename                  │
-│         ✓ Files moved to Trash (not deleted)            │
+│         ✗ Originals deleted permanently (not to Trash)  │
 └──────────────────────────────────────────────────────────┘
                         ↓
 ┌──────────────────────────────────────────────────────────┐
@@ -55,7 +55,7 @@ This document explains the design philosophy, phase workflow, classification rul
 │ Role:   Direct mutagen write to fix URL-contaminated    │
 │         metadata                                         │
 │ Time:   <1 min for 50-100 files                        │
-│ Safety: ✓ Dry-run preview first (--dry-run)            │
+│ Safety: ✓ Dry-run preview by default                   │
 │         ✓ Inspect preview before --execute              │
 │         ✓ No Music.app dependency                       │
 └──────────────────────────────────────────────────────────┘
@@ -208,7 +208,7 @@ for each row in audit.tsv:
         2. Copy source → destination
         3. Hash source and destination (SHA-256)
         4. If hashes match:
-               - Delete source (move to Trash)
+               - Delete source permanently (not to Trash)
                - Log as "archived + verified"
            Else:
                - Leave source untouched
@@ -324,7 +324,7 @@ Directly modify audio file metadata to fix URL-contaminated tags. Useful for fil
 
 **Stage 1: Dry-Run (Preview)**
 ```python
-python fix_tags.py --input phase4_fixes.tsv --dry-run
+python fix_tags.py --input phase4_fixes.tsv
 # Output: fix_tags_preview_YYYYMMDD_HHMMSS.tsv
 # User inspects preview and may edit it
 ```
@@ -339,15 +339,16 @@ python fix_tags.py --input fix_tags_preview_YYYYMMDD_HHMMSS.tsv --execute
 ### Input Format (TSV)
 
 ```
-filepath | new_artist | new_title | clear_album
-~/Music/.../Song.mp3 | Artist Name | Song Title | 0
-~/Music/.../Mix.mp3  | Unknown Artist | Mix | 1
+filepath | new_artist | new_title | clear_album | new_genre
+~/Music/.../Song.mp3 | Artist Name | Song Title | 0 |
+~/Music/.../Mix.mp3  | Unknown Artist | Mix | 1 | House
 ```
 
 - `filepath` — full path to audio file
-- `new_artist` — replacement artist (required)
-- `new_title` — replacement title (required)
-- `clear_album` — `0` = keep album, `1` = clear album + set genre to "Dance"
+- `new_artist` — replacement artist (empty = leave unchanged)
+- `new_title` — replacement title (empty = leave unchanged)
+- `clear_album` — `0` = keep album, `1` = clear album
+- `new_genre` — optional; replacement genre (empty or omitted = leave unchanged)
 
 ### Multi-Format Support
 
@@ -359,7 +360,7 @@ from mutagen.flac import FLAC
 from mutagen.aiff import AIFF
 ```
 
-Supported formats: MP3 (ID3), MP4/M4A (iTunes atoms), FLAC (Vorbis), AIFF (ID3).
+Supported formats: MP3 (ID3), MP4/M4A (iTunes atoms), FLAC (Vorbis). WAV and AIFF are currently written with the MP3 ID3 writer, which damages those files — do not run tag fixes on them (known issue).
 
 ### Tag Writing
 
@@ -370,7 +371,8 @@ audio.tags["TIT2"] = TIT2(encoding=3, text=[new_title])
 audio.tags["TPE1"] = TPE1(encoding=3, text=[new_artist])
 if clear_album:
     audio.tags["TALB"] = TALB(encoding=3, text=[])
-    audio.tags["TCON"] = TCON(encoding=3, text=["Dance"])
+if new_genre:
+    audio.tags["TCON"] = TCON(encoding=3, text=[new_genre])
 audio.save()
 ```
 
@@ -470,14 +472,11 @@ else:
 
 **Guarantees:** Source file is **never deleted** unless the copy is identical.
 
-### 2. Trash-Not-Delete (Final Safety Net)
+### 2. Trash in Phase 3 (Partial Safety Net)
 
-```python
-# Phase 2 & 3: Move to Trash instead of permanent delete
-os.rename(source, Path.home() / ".Trash" / source.name)
-```
+Phase 3 asks Finder to move each listed file to the Trash rather than deleting it, so those files stay recoverable until the Trash is emptied.
 
-**Guarantees:** Files are recoverable for 24+ hours without backup restoration.
+Phase 2 does **not** use the Trash: once the archive copy's SHA-256 matches, the original is deleted with `unlink()`. The verified archive copy is the recovery path for those files.
 
 ### 3. Dry-Run by Default (Explicit Execution)
 

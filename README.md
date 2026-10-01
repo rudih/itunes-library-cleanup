@@ -1,14 +1,14 @@
 # iTunes & Apple Music Library Cleanup
 
-**A safe, tested Python tool to clean up your iTunes/Apple Music library by removing production bounces, voice memos, long-form audio, and fixing URL-contaminated tags.**
+**Audit and clean up a local iTunes or Apple Music library on macOS. Find voice memos, DAW exports and long recordings, then selectively archive them or fix unwanted metadata. Dry-run by default; back up your library and review every preview before running anything for real.**
 
-![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue) ![macOS](https://img.shields.io/badge/macOS-10.14%2B-lightgrey) ![License](https://img.shields.io/badge/License-MIT-green)
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue) ![macOS](https://img.shields.io/badge/macOS-10.15%2B-lightgrey) ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
 ## What This Does
 
-Old iTunes and Apple Music libraries accumulated junk back when iTunes was the default app for opening audio files: voice memos from your iPhone, production bounces from your DAW, DJ mixes, audio demos, files tagged with URLs instead of proper metadata. This tool **safely identifies and archives** these files, **fixes corrupted tags**, and **removes entries from Music.app** — all with comprehensive verification and rollback protection.
+Old iTunes and Apple Music libraries accumulated junk back when iTunes was the default app for opening audio files: voice memos from your iPhone, production bounces from your DAW, DJ mixes, audio demos, files tagged with URLs instead of proper metadata. This tool **safely identifies and archives** these files, **fixes corrupted tags**, and **removes entries from Music.app** — with SHA-256-verified archive copies and a dry-run preview before anything changes.
 
 ### What It Handles
 
@@ -18,7 +18,7 @@ This tool was built and tested against a real, long-lived personal library. Out 
 - ✅ **Archive long-form audio** (10+ minute tracks: mixes, DJ sets, podcasts)
 - ✅ **Fix URL-contaminated metadata** (e.g. an artist or album tag set to a download site's web address)
 - ✅ **Leave genuine music untouched** in the library
-- ✅ **Avoid accidental file loss** through hash verification and dry-run defaults
+- ✅ **Preview before acting**: every phase that changes files is a dry run unless you pass `--execute`
 
 These categories reflect one library. Yours will have its own kinds of clutter; see [Customising for Your Library](#customising-for-your-library) to change what gets archived.
 
@@ -28,7 +28,12 @@ These categories reflect one library. Yours will have its own kinds of clutter; 
 
 ## ⚠️ Critical: Before You Begin
 
-**Back up your iTunes library before running this tool.** While the tool is designed to be safe (hash verification, trash-not-delete), accidental deletion is always possible.
+**Back up your library before running this tool.** The author has used it successfully on their own library, but your setup may differ (library location, file formats, iCloud Music Library / Sync Library, external drives), so be sure to have a backup before use.
+
+Know what the destructive steps do:
+- **Phase 2 (archive)** copies each file to an archive folder, checks the copy with SHA-256, then **permanently deletes the original**. It is not moved to the Trash; the archive copy is your copy.
+- **Phase 3 (remove from library)** deletes entries from your Music library and moves any remaining files to the Trash. With Sync Library turned on, deleting from your library can also remove items from your other devices.
+- **Phase 4 (fix tags)** rewrites metadata inside your audio files.
 
 ### Recommended Backup Steps
 
@@ -42,7 +47,7 @@ These categories reflect one library. Yours will have its own kinds of clutter; 
 
 2. **Manual iTunes Library Copy**
    ```bash
-   # Copy your entire Music library to an external drive
+   # Copy your entire Music folder (library file + media)
    cp -r ~/Music/Music ~/Music/Music-Backup-$(date +%Y%m%d)
    ```
 
@@ -53,17 +58,18 @@ These categories reflect one library. Yours will have its own kinds of clutter; 
    ```
 
 **Do not proceed without at least one backup.** If something goes wrong:
-- Files on disk are never permanently deleted (moved to Trash)
-- Music.app library entries can be restored from Time Machine
-- The tool provides detailed error logs for each phase
+- Archived files are in your archive folders (each copy was hash-checked before its original was deleted)
+- Files removed in phase 3 are in the Trash until you empty it
+- Your Music library (playlists, play counts, entries) can be restored from your backup
+- Check the terminal output and `~/Music/Archive/logs/` for errors
 
 ---
 
 ## Installation
 
 ### Requirements
-- **Python 3.9+** (macOS ships with 3.x; use `brew install python3` if needed)
-- **macOS 10.14+** (for Music.app integration)
+- **Python 3.10+** (check with `python3 --version`; use `brew install python3` if needed)
+- **macOS 10.15 (Catalina) or later** for phase 3, which scripts the Music app. Phases 1, 2 and 4 work on the files directly.
 - **mutagen** (installs automatically)
 - **pytest** (for running tests; optional)
 
@@ -140,11 +146,11 @@ python archive.py --input audit.tsv --classes voice_memo,long_audio --execute
 **What happens:**
 1. Copy source file to destination (e.g., `~/Music/Archive/Voice Notes/`)
 2. Calculate SHA-256 hash of source and destination
-3. If hashes match: delete source file (move to Trash)
+3. If hashes match: delete the original file permanently (it is **not** moved to the Trash)
 4. If hashes don't match: leave source untouched, log error
 
 **Duplicate handling:**
-- Same filename + same size → skip (already archived)
+- Same filename + same size → skip (treated as already archived; contents are **not** compared — see Known Issues)
 - Same filename + different size → rename destination with suffix, archive both
 
 **Output:** `summary_YYYYMMDD_HHMMSS.txt` + appended `run_log.tsv`
@@ -173,31 +179,37 @@ python remove_library.py --input tracks_to_remove_YYYYMMDD_HHMMSS.txt --execute
 Fix URL-contaminated tags directly in file metadata. Useful for files you're keeping but want to fix.
 
 ```bash
-# Generate a preview of what would be fixed
-python fix_tags.py --input docs/examples/phase4_fixes.tsv --dry-run
+# Dry run (default): writes fix_tags_preview_YYYYMMDD_HHMMSS.tsv showing current vs new tags
+python fix_tags.py --input my_fixes.tsv
 
-# Review the preview, then execute
-python fix_tags.py --input phase4_fixes_preview_YYYYMMDD_HHMMSS.tsv --execute
+# Review the preview, then run again on the SAME input file
+python fix_tags.py --input my_fixes.tsv --execute
 ```
 
 **Input format (TSV):**
 ```
-filepath                           | new_artist      | new_title | clear_album
-~/Music/Music/.../Song.mp3        | Artist Name     | Song      | 1
+filepath                           | new_artist      | new_title | clear_album | new_genre
+~/Music/Music/.../Song.mp3        | Artist Name     | Song      | 1           | House
 ```
 
-- `new_artist`, `new_title` — replacement values
-- `clear_album` — set to `1` to clear album + set genre to "Dance", or `0` to leave unchanged
+- `new_artist`, `new_title` — replacement values (leave empty to keep the current value)
+- `clear_album` — set to `1` to clear the album, or `0` to leave it unchanged
+- `new_genre` — optional; leave empty or omit the column to keep the current genre
+
+See `docs/examples/phase4_fixes.tsv` for a template.
+
+> **Don't use the preview file as `--execute` input.** It has extra columns and will write the wrong values. Edit and re-run your original input file instead.
+>
+> **MP3, M4A and FLAC only for now.** Writing tags to WAV or AIFF files currently damages them (known issue).
 
 ### Phase 5: Summary & Logging
 
-Automatically generated after phases 2, 3, or 4. Shows:
-- Files processed, archived, verified, failed, skipped
-- Total data moved (MB)
+Phase 3 writes a summary file (`summary_YYYYMMDD_HHMMSS.txt`) and appends a row to `run_log.tsv` in the log folder, showing:
+- Tracks processed, removed, trashed, not found and failed
 - Full error list with file paths
 - Phase duration
 
-**Persistent run log:** `run_log.tsv` tracks all operations across sessions.
+Phases 2 and 4 print their results to the terminal; phase 2 also writes the `tracks_to_remove_*.txt` list used by phase 3. Keep the terminal output if you want a record of those runs.
 
 ---
 
@@ -302,13 +314,14 @@ You don't need to remove a category from the code. Pass `--classes` to `archive.
 
 | Feature | How It Works |
 |---------|---|
-| **Hash Verification** | SHA-256 comparison before deletion. Source untouched if hashes don't match. |
-| **Trash-Not-Delete** | Files moved to Trash, not permanently removed. Recoverable for 24+ hours. |
-| **Dry-Run by Default** | All destructive phases require explicit `--execute` flag. Safe preview first. |
-| **Duplicate Detection** | Prevents re-archiving the same file twice. |
-| **Phase Independence** | Run phases individually or in sequence. Idempotent (safe to re-run). |
-| **Audit Trail** | Every operation logged to `run_log.tsv` with timestamp, counts, and errors. |
-| **Human Inspection** | Audit reports as TSV files — inspect, filter, edit in Excel/Numbers before executing. |
+| **Hash Verification** | Each archive copy is checked with SHA-256 before the original is deleted. If the hashes don't match, the original is left untouched. |
+| **Archive Before Delete** | Phase 2 deletes an original only after a verified copy exists in the archive. Phase 3 moves files to the Trash rather than deleting them. |
+| **Dry-Run by Default** | Every phase that changes files or your library needs an explicit `--execute` flag. |
+| **Skip Already-Archived Files** | A file whose name and size match one already in the archive is skipped (contents are not compared). |
+| **Phase Independence** | Run phases individually or in sequence. |
+| **Human Inspection** | Audit reports are TSV files — inspect, filter and edit them in Excel/Numbers before executing. |
+
+These features reduce risk; they don't remove it. They have worked on the author's library, but they aren't a substitute for a backup.
 
 ---
 
@@ -360,7 +373,10 @@ Priority 6: clean            → None of the above — leave in library
 - **Music.app dependency** — Phase 3 (remove from library) requires Music.app running.
 - **No Music.app needed** — Phases 1, 2, and 4 work without Music.app open.
 - **iTunes XML export** — Optional; library scanning uses file system directly.
-- **Duplicate detection by filename** — Uses filename + size, not audio fingerprinting. Different edits of the same song may be treated as duplicates.
+- **Duplicate detection by filename** — Uses filename + size, not file contents or audio fingerprinting. Two different files with the same name and size are treated as the same file: the second is skipped, left out of the archive, and still listed for removal in phase 3. Check the `tracks_to_remove` list before running phase 3.
+- **Tag fixing on WAV/AIFF** — Not supported yet; writing tags to these files damages them. Use phase 4 on MP3, M4A and FLAC only.
+- **iCloud Music Library / Sync Library** — Not tested. Deleting from your library may also remove items from other devices.
+- **Heuristic classification** — Long duration, filename keywords and folder names are signals, not proof. Genuine music can be flagged, so review the audit before archiving, and pass `--classes` to archive only the categories you've checked.
 
 ---
 
@@ -409,13 +425,13 @@ A: The audit classifies these as `bounce`: files in a `Production Bounces` folde
 A: Any track of 10 minutes or more is classified as `long_audio`. Change `LONG_AUDIO_THRESHOLD_MINUTES` to adjust the cut-off, and add genuine long tracks to `MANUAL_OVERRIDES` to keep them.
 
 **Q: How do I fix artist or album tags that show a website URL?**  
-A: The audit flags these in the `dirty_tag` column. List the corrections in a TSV (see `docs/examples/phase4_fixes.tsv`) and run `python fix_tags.py`. It previews the changes first and only writes tags with `--execute`.
+A: The audit flags these in the `dirty_tag` column. List the corrections in a TSV (see `docs/examples/phase4_fixes.tsv`) and run `python fix_tags.py`. It previews the changes first and only writes tags with `--execute`. MP3, M4A and FLAC files only for now.
 
 **Q: Does it work with the Music app, or only old iTunes?**  
-A: It works with the Music app on current macOS. The library files are scanned directly, so phases 1, 2 and 4 don't depend on which app you use.
+A: Phase 3 scripts the Music app, so it needs macOS 10.15 (Catalina) or later. Phases 1, 2 and 4 work on the library files directly, so they don't depend on which app you use.
 
 **Q: Is this safe?**  
-A: Yes. All destructive operations default to dry-run and require explicit `--execute`. Files are moved to Trash (recoverable) and verified via SHA-256 before deletion. Backup before you start, just in case.
+A: The author has used it successfully on their own library, but your setup may differ, so back up your library before use. Every phase that changes anything is a dry run unless you pass `--execute`, and archive copies are hash-checked before originals are deleted. Phase 2 deletes originals permanently (not to the Trash), so review the audit and dry-run output before executing.
 
 **Q: Do I need Music.app running?**  
 A: Only for phase 3 (remove from Music.app). Phases 1, 2, and 4 work without it.
@@ -424,7 +440,7 @@ A: Only for phase 3 (remove from Music.app). Phases 1, 2, and 4 work without it.
 A: Yes. Each phase is independent. You can audit, then skip archiving, then fix tags later. No required order.
 
 **Q: What if something goes wrong?**  
-A: Check `~/Music/Archive/logs/` for detailed error reports. Restore from your backup. Files moved to Trash are recoverable for 24+ hours.
+A: Check the terminal output and `~/Music/Archive/logs/` for errors. Archived files are in your archive folders, files removed in phase 3 are in the Trash until you empty it, and anything else (including your Music library itself) comes back from your backup.
 
 **Q: How long does it take?**  
 A: Depends on library size. Phase 1 (audit) takes ~1-2 minutes for 4,000 tracks. Phase 2 (archive) takes ~5-10 minutes per 500 files (depends on disk speed). Phase 3 (remove from Music.app) is slower per-track due to AppleScript IPC.

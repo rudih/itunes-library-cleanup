@@ -55,7 +55,7 @@ def write_tsv(path: Path, rows: list[dict]) -> Path:
                 row.get("new_artist", ""),
                 row.get("new_title", ""),
                 row.get("clear_album", "0"),
-            ]) + "\n")
+            ] + ([row["new_genre"]] if "new_genre" in row else [])) + "\n")
     return path
 
 
@@ -108,15 +108,28 @@ class TestDirtyTagDetection:
 class TestParseTsv:
     def test_parses_four_fields(self, tmp_path):
         tsv = write_tsv(tmp_path / "fixes.tsv", [
-            {"filepath": "/a/b/track.mp3", "new_artist": "Solid Snake",
-             "new_title": "Automation Monster Part II", "clear_album": "1"},
+            {"filepath": "/a/b/track.mp3", "new_artist": "Some Artist",
+             "new_title": "Some Track Part II", "clear_album": "1"},
         ])
         rows = fix_tags.parse_fixes_tsv(tsv)
         assert len(rows) == 1
         assert rows[0]["filepath"]    == "/a/b/track.mp3"
-        assert rows[0]["new_artist"]  == "Solid Snake"
-        assert rows[0]["new_title"]   == "Automation Monster Part II"
+        assert rows[0]["new_artist"]  == "Some Artist"
+        assert rows[0]["new_title"]   == "Some Track Part II"
         assert rows[0]["clear_album"] == "1"
+
+    def test_new_genre_defaults_to_empty(self, tmp_path):
+        tsv = write_tsv(tmp_path / "fixes.tsv", [
+            {"filepath": "/a/b/track.mp3", "new_artist": "A", "new_title": "T", "clear_album": "1"},
+        ])
+        assert fix_tags.parse_fixes_tsv(tsv)[0]["new_genre"] == ""
+
+    def test_parses_optional_genre_field(self, tmp_path):
+        tsv = write_tsv(tmp_path / "fixes.tsv", [
+            {"filepath": "/a/b/track.mp3", "new_artist": "A", "new_title": "T",
+             "clear_album": "1", "new_genre": "House"},
+        ])
+        assert fix_tags.parse_fixes_tsv(tsv)[0]["new_genre"] == "House"
 
     def test_skips_blank_lines(self, tmp_path):
         tsv = tmp_path / "fixes.tsv"
@@ -176,12 +189,17 @@ class TestWriteTagsMP3:
         fix_tags.write_tags_to_file(path, new_artist="", new_title="New Title", clear_album=False)
         assert read_id3(path)["title"] == "New Title"
 
-    def test_clear_album_sets_empty_and_dance_genre(self, tmp_path):
-        path = make_mp3(tmp_path / "track.mp3", album="ExampleTracks.com", genre="")
+    def test_clear_album_empties_album_and_leaves_genre(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", album="ExampleTracks.com", genre="Classical")
         fix_tags.write_tags_to_file(path, new_artist="", new_title="", clear_album=True)
         after = read_id3(path)
         assert after["album"] == ""
-        assert after["genre"] == "Dance"
+        assert after["genre"] == "Classical"
+
+    def test_new_genre_written_when_given(self, tmp_path):
+        path = make_mp3(tmp_path / "track.mp3", genre="")
+        fix_tags.write_tags_to_file(path, new_artist="", new_title="", clear_album=False, new_genre="House")
+        assert read_id3(path)["genre"] == "House"
 
     def test_clear_album_false_leaves_album_unchanged(self, tmp_path):
         path = make_mp3(tmp_path / "track.mp3", album="Original Album")
@@ -229,9 +247,9 @@ class TestWriteTagsMP3:
 
 class TestSplitArtistFromTitle:
     def test_splits_on_dash(self):
-        artist, title = fix_tags.split_artist_from_title("Solid Snake - Automation Monster Part II")
-        assert artist == "Solid Snake"
-        assert title  == "Automation Monster Part II"
+        artist, title = fix_tags.split_artist_from_title("Some Artist - Some Track Part II")
+        assert artist == "Some Artist"
+        assert title  == "Some Track Part II"
 
     def test_no_dash_returns_empty_artist(self):
         artist, title = fix_tags.split_artist_from_title("Normal Title")

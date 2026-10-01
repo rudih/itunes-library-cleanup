@@ -20,13 +20,12 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Multimedia :: Sound/Audio",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "mutagen>=1.45.0",
 ]
@@ -42,9 +41,6 @@ Homepage = "https://github.com/rudih/itunes-library-cleanup"
 Documentation = "https://github.com/rudih/itunes-library-cleanup/tree/main/docs"
 Repository = "https://github.com/rudih/itunes-library-cleanup.git"
 Issues = "https://github.com/rudih/itunes-library-cleanup/issues"
-
-[project.scripts]
-itunes-cleanup = "itunes_cleanup.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

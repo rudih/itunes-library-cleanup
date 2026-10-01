@@ -1,7 +1,7 @@
-# filepath	new_artist	new_title	clear_album
+# filepath	new_artist	new_title	clear_album	new_genre (optional)
 # Rules:
-#   new_artist / new_title: empty = leave unchanged
-#   clear_album: 1 = set album="" and genre="Dance"
+#   new_artist / new_title / new_genre: empty = leave unchanged
+#   clear_album: 1 = set album=""
 #
 # Replace the paths below with real files from your audit report.
 #

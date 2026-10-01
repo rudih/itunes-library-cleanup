@@ -73,12 +73,13 @@ def write_tags_to_file(
     new_artist: str,
     new_title: str,
     clear_album: bool,
+    new_genre: str = "",
 ) -> dict:
     """
     Write corrected tags to an audio file.
 
-    - new_artist / new_title: written only when non-empty
-    - clear_album=True: sets album to "" and genre to "Dance"
+    - new_artist / new_title / new_genre: written only when non-empty
+    - clear_album=True: sets album to ""
 
     Returns {"ok": bool, "error": str|None}
     """
@@ -86,11 +87,11 @@ def write_tags_to_file(
     ext = path.suffix.lower()
     try:
         if ext in {".mp3", ".wav", ".aif", ".aiff"}:
-            _write_id3(path, new_artist, new_title, clear_album)
+            _write_id3(path, new_artist, new_title, clear_album, new_genre)
         elif ext == ".m4a":
-            _write_mp4(path, new_artist, new_title, clear_album)
+            _write_mp4(path, new_artist, new_title, clear_album, new_genre)
         elif ext == ".flac":
-            _write_flac(path, new_artist, new_title, clear_album)
+            _write_flac(path, new_artist, new_title, clear_album, new_genre)
         else:
             result["error"] = f"Unsupported extension: {ext}"
             return result
@@ -100,7 +101,7 @@ def write_tags_to_file(
     return result
 
 
-def _write_id3(path: Path, new_artist: str, new_title: str, clear_album: bool) -> None:
+def _write_id3(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
     try:
         tags = ID3(str(path))
     except ID3NoHeaderError:
@@ -111,11 +112,12 @@ def _write_id3(path: Path, new_artist: str, new_title: str, clear_album: bool) -
         tags.add(TIT2(encoding=3, text=[new_title]))
     if clear_album:
         tags.add(TALB(encoding=3, text=[""]))
-        tags.add(TCON(encoding=3, text=["Dance"]))
+    if new_genre:
+        tags.add(TCON(encoding=3, text=[new_genre]))
     tags.save(str(path))
 
 
-def _write_mp4(path: Path, new_artist: str, new_title: str, clear_album: bool) -> None:
+def _write_mp4(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
     audio = MP4(str(path))
     if new_artist:
         audio["\xa9ART"] = [new_artist]
@@ -123,11 +125,12 @@ def _write_mp4(path: Path, new_artist: str, new_title: str, clear_album: bool) -
         audio["\xa9nam"] = [new_title]
     if clear_album:
         audio["\xa9alb"] = [""]
-        audio["\xa9gen"] = ["Dance"]
+    if new_genre:
+        audio["\xa9gen"] = [new_genre]
     audio.save()
 
 
-def _write_flac(path: Path, new_artist: str, new_title: str, clear_album: bool) -> None:
+def _write_flac(path: Path, new_artist: str, new_title: str, clear_album: bool, new_genre: str = "") -> None:
     audio = FLAC(str(path))
     if new_artist:
         audio["artist"] = [new_artist]
@@ -135,7 +138,8 @@ def _write_flac(path: Path, new_artist: str, new_title: str, clear_album: bool) 
         audio["title"] = [new_title]
     if clear_album:
         audio["album"] = [""]
-        audio["genre"] = ["Dance"]
+    if new_genre:
+        audio["genre"] = [new_genre]
     audio.save()
 
 
@@ -143,13 +147,14 @@ def _write_flac(path: Path, new_artist: str, new_title: str, clear_album: bool) 
 # TSV parsing
 # ---------------------------------------------------------------------------
 
-FIELDNAMES = ["filepath", "new_artist", "new_title", "clear_album"]
+FIELDNAMES = ["filepath", "new_artist", "new_title", "clear_album", "new_genre"]
 
 
 def parse_fixes_tsv(tsv_path: Path) -> list[dict]:
     """
     Parse a fixes TSV file (same format as phase4_fixes.tsv).
-    Returns a list of dicts with keys: filepath, new_artist, new_title, clear_album.
+    Returns a list of dicts with keys: filepath, new_artist, new_title,
+    clear_album, new_genre. The new_genre column is optional.
     Skips blank lines and lines starting with #.
     """
     rows = []
@@ -166,6 +171,7 @@ def parse_fixes_tsv(tsv_path: Path) -> list[dict]:
                 "new_artist":  parts[1].strip(),
                 "new_title":   parts[2].strip(),
                 "clear_album": parts[3].strip(),
+                "new_genre":   parts[4].strip() if len(parts) > 4 else "",
             })
     return rows
 
@@ -198,6 +204,7 @@ PREVIEW_FIELDNAMES = [
     "current_artist", "new_artist",
     "current_title",  "new_title",
     "current_album",  "clear_album",
+    "current_genre",  "new_genre",
 ]
 
 
@@ -224,6 +231,8 @@ def generate_preview_tsv(fixes: list[dict], output_dir: Path) -> Path:
                 "new_title":      fix["new_title"],
                 "current_album":  cur["album"],
                 "clear_album":    fix["clear_album"],
+                "current_genre":  cur["genre"],
+                "new_genre":      fix.get("new_genre", ""),
             })
     return out_path
 
@@ -237,7 +246,7 @@ def main():
         description="Fix URL-contaminated tags in audio files."
     )
     parser.add_argument("--input",   required=True, type=Path,
-                        help="TSV file: filepath|new_artist|new_title|clear_album")
+                        help="TSV file: filepath|new_artist|new_title|clear_album[|new_genre]")
     parser.add_argument("--execute", action="store_true",
                         help="Write tags (default is dry-run → preview TSV)")
     parser.add_argument("--output",  type=Path, default=config.LOG_DIR,
@@ -264,7 +273,7 @@ def main():
             continue
 
         clear = fix["clear_album"] == "1"
-        result = write_tags_to_file(path, fix["new_artist"], fix["new_title"], clear)
+        result = write_tags_to_file(path, fix["new_artist"], fix["new_title"], clear, fix["new_genre"])
         if result["ok"]:
             counts["fixed"] += 1
             print(f"  FIXED    {path.name[:70]}")

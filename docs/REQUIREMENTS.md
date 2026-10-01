@@ -1,4 +1,4 @@
-# itunes_cleanup — Requirements Document
+# iTunes Library Cleanup — Requirements Document
 
 **Version:** 0.2
 **Date:** 2026-03-21
@@ -15,7 +15,7 @@ An iTunes/Apple Music library accumulates multiple categories of audio file over
 - **DJ mixes / demos** — long-form personal recordings
 - **Dance tracks with dirty tags** — files downloaded from MP3 blogs where the artist or album field contains a URL (e.g. a download site's web address) rather than real metadata
 
-All four categories need different treatment. The existing manual workflow uses two AppleScript files and hand-edited TSV files. The goal of `itunes_cleanup` is to replace / automate that workflow as a reproducible, tested Python package — suitable for reuse by anyone with a similar iTunes library mess.
+All four categories need different treatment. The existing manual workflow uses two AppleScript files and hand-edited TSV files. The goal of iTunes Library Cleanup is to replace / automate that workflow as a reproducible, tested Python package — suitable for reuse by anyone with a similar iTunes library mess.
 
 ---
 
@@ -95,10 +95,10 @@ Input: audit report (or filtered subset, e.g. `--classes voice_memo,long_audio`)
 - Produces a removal report with counts: removed / not found / errors
 
 ### Phase 4 — Fix Tags (`fix_tags.py`)
-- Input: a TSV file with columns `filepath | new_artist | new_title | clear_album`
+- Input: a TSV file with columns `filepath | new_artist | new_title | clear_album`, plus an optional `new_genre` column
   (same format as existing `phase4_fixes.tsv`)
-- **Dry-run mode** (`--dry-run`): writes a preview TSV (`fix_tags_preview_YYYYMMDD_HHMMSS.tsv`) showing proposed changes without modifying any files. The preview file is in the same format as the input — it can be edited and fed back to `--execute`.
-- **Execute mode** (`--execute`): writes corrected tags directly to files via `mutagen`; clears `album` field and sets `genre = Dance` when `clear_album == 1`
+- **Dry-run mode** (default, no flag): writes a preview TSV (`fix_tags_preview_YYYYMMDD_HHMMSS.tsv`) showing current tags alongside proposed changes without modifying any files. The preview is for review only — it has extra columns and must not be passed to `--execute`; edit the original input file instead.
+- **Execute mode** (`--execute`): writes corrected tags directly to files via `mutagen`; clears the `album` field when `clear_album == 1`, and sets `genre` only when `new_genre` is given
 - Does NOT require Music.app to be running
 
 ### Phase 5 — Summary & Log (`summary.py`)
@@ -168,7 +168,8 @@ LOG_DIR = "~/Music/Archive/logs"
 - Detect URL in album field → `dirty_tag = True`
 - Clean fields → `dirty_tag = False`
 - Parse TSV row: correct extraction of filepath, new_artist, new_title, clear_album
-- `clear_album == "1"` → album cleared, genre set to Dance
+- `clear_album == "1"` → album cleared, genre unchanged
+- `new_genre` given → genre set; omitted → genre unchanged
 - `clear_album == "0"` → album unchanged
 - Edge cases: empty artist field, non-ASCII characters, very long URLs, tab characters in values
 
@@ -181,13 +182,13 @@ Each module is runnable directly:
 ```bash
 python audit.py [--library PATH] [--output DIR]
 python archive.py --input audit.tsv [--classes voice_memo,long_audio] [--execute]
-python fix_tags.py --input phase4_fixes.tsv [--dry-run | --execute]
+python fix_tags.py --input phase4_fixes.tsv [--execute]
 python remove_library.py --input tracks_to_remove.txt [--execute]
 ```
 
 **Default behaviour is always safe / non-destructive:**
 - `archive.py` and `remove_library.py` require `--execute` to actually delete anything
-- `fix_tags.py` defaults to `--dry-run` (writes preview TSV); requires `--execute` to write tags
+- `fix_tags.py` defaults to a dry run (writes preview TSV); requires `--execute` to write tags
 
 ---
 
@@ -206,7 +207,7 @@ No third-party HTTP clients, no MusicBrainz, no external API calls.
 ## 9. Non-Functional Requirements
 
 - **Safety first:** no source file is ever deleted without a verified SHA-256 hash match
-- **Idempotent:** running archive twice on the same input is safe (duplicate detection handles re-runs)
+- **Re-runs:** running archive twice on the same input skips files already archived (matched by filename and size, not contents)
 - **Explicit execution:** destructive phases require `--execute`; default is always a dry-run or preview
 - **macOS only** for `remove_library` phase; all other phases are platform-agnostic
 - **No Music.app dependency** for audit, archive, or fix_tags phases
