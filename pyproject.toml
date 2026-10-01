@@ -3,7 +3,7 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "itunes-cleanup"
+name = "itunes-library-cleanup"
 version = "0.3.0"
 description = "Safe, tested Python tool to clean up your iTunes/Apple Music library"
 readme = "README.md"
@@ -38,10 +38,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/rudih/itunes_cleanup"
-Documentation = "https://github.com/rudih/itunes_cleanup/tree/main/docs"
-Repository = "https://github.com/rudih/itunes_cleanup.git"
-Issues = "https://github.com/rudih/itunes_cleanup/issues"
+Homepage = "https://github.com/rudih/itunes-library-cleanup"
+Documentation = "https://github.com/rudih/itunes-library-cleanup/tree/main/docs"
+Repository = "https://github.com/rudih/itunes-library-cleanup.git"
+Issues = "https://github.com/rudih/itunes-library-cleanup/issues"
 
 [project.scripts]
 itunes-cleanup = "itunes_cleanup.cli:main"

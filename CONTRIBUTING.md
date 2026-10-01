@@ -7,8 +7,8 @@ Thanks for your interest in contributing! This document outlines the process and
 1. **Fork** the repository on GitHub
 2. **Clone** your fork locally:
    ```bash
-   git clone https://github.com/your-username/itunes_cleanup.git
-   cd itunes_cleanup
+   git clone https://github.com/your-username/itunes-library-cleanup.git
+   cd itunes-library-cleanup
    ```
 3. **Create a branch** for your work:
    ```bash
@@ -125,7 +125,7 @@ By contributing, you agree that your code is licensed under the MIT License (see
 
 ## Questions?
 
-- **Issues:** Open a [GitHub issue](https://github.com/rudih/itunes_cleanup/issues)
+- **Issues:** Open a [GitHub issue](https://github.com/rudih/itunes-library-cleanup/issues)
 
 ---
 

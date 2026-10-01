@@ -71,8 +71,8 @@ These categories reflect one library. Yours will have its own kinds of clutter; 
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/rudih/itunes_cleanup.git
-   cd itunes_cleanup
+   git clone https://github.com/rudih/itunes-library-cleanup.git
+   cd itunes-library-cleanup
    ```
 
 2. Install dependencies:
@@ -433,7 +433,7 @@ A: Depends on library size. Phase 1 (audit) takes ~1-2 minutes for 4,000 tracks.
 
 ## Support
 
-- **Issues:** Found a bug or have a question? [Open an issue](https://github.com/rudih/itunes_cleanup/issues)
+- **Issues:** Found a bug or have a question? [Open an issue](https://github.com/rudih/itunes-library-cleanup/issues)
 - **Incident Reports:** See [docs/](docs/) for detailed logs and incident analysis
 
 ---
