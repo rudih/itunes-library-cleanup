@@ -5,6 +5,7 @@ All tests use pytest's tmp_path fixture for real on-disk files.
 No mocking — we test the actual SHA-256 mechanism that guards source deletion.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -12,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from itunes_cleanup.archive import hash_file, verify_copy, resolve_destination, copy_and_verify
+from itunes_cleanup.archive import hash_file, verify_copy, resolve_destination, copy_and_verify, check_destinations
 
 
 # ---------------------------------------------------------------------------
@@ -220,3 +221,53 @@ class TestCopyAndVerify:
         result = copy_and_verify(src, tmp_path / "dest")
         assert result["action"]   == "copied"
         assert result["verified"] is True
+
+
+# ---------------------------------------------------------------------------
+# Destination safety
+# ---------------------------------------------------------------------------
+
+class TestDestinationIsNotSource:
+    """Regression: an archive folder equal to the source's own folder used to
+    return "skipped"/verified=True, queueing the only copy for removal."""
+
+    def test_dest_dir_is_source_folder_fails(self, tmp_path):
+        src = write(tmp_path / "lib" / "track.mp3", b"data")
+        result = copy_and_verify(src, tmp_path / "lib")
+        assert result["action"] == "failed"
+        assert result["verified"] is False
+        assert src.read_bytes() == b"data"
+
+    def test_dest_dir_symlinked_to_source_folder_fails(self, tmp_path):
+        src = write(tmp_path / "lib" / "track.mp3", b"data")
+        (tmp_path / "alias").symlink_to(tmp_path / "lib")
+        result = copy_and_verify(src, tmp_path / "alias")
+        assert result["action"] == "failed"
+        assert src.exists()
+
+    def test_hard_link_in_dest_fails(self, tmp_path):
+        src = write(tmp_path / "lib" / "track.mp3", b"data")
+        (tmp_path / "dest").mkdir()
+        os.link(src, tmp_path / "dest" / "track.mp3")
+        result = copy_and_verify(src, tmp_path / "dest")
+        assert result["action"] == "failed"
+        assert src.exists()
+
+
+class TestCheckDestinations:
+    def test_destination_inside_library_rejected(self, tmp_path):
+        lib = tmp_path / "Music"
+        errors = check_destinations([lib / "Archive"], lib)
+        assert len(errors) == 1
+
+    def test_destination_equal_to_library_rejected(self, tmp_path):
+        lib = tmp_path / "Music"
+        assert check_destinations([lib], lib)
+
+    def test_destination_outside_library_allowed(self, tmp_path):
+        assert check_destinations([tmp_path / "Archive"], tmp_path / "Music") == []
+
+    def test_sibling_with_shared_prefix_allowed(self, tmp_path):
+        # "/Music Archive" must not count as inside "/Music"
+        assert check_destinations([tmp_path / "Music Archive"], tmp_path / "Music") == []
+

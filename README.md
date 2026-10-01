@@ -153,15 +153,17 @@ python archive.py --input audit.tsv --classes voice_memo,long_audio --execute
 - Same filename + identical contents (SHA-256) → skip (already archived)
 - Same filename + different contents → archive under a `(potential duplicate N)` name, so both are kept
 
-**Output:** `summary_YYYYMMDD_HHMMSS.txt` + appended `run_log.tsv`
+**Output:** `tracks_to_remove_YYYYMMDD_HHMMSS.txt` in the log folder (`~/Music/Archive/logs/` by default). The run prints its exact path at the end; phase 3 uses it.
+
+**Archive folders must be outside your library.** `archive.py` refuses to run if an `ARCHIVE_*` folder is inside `LIBRARY_ROOT`, and a file is never treated as already archived if the "archive copy" is the original itself (same folder, symlink or hard link).
 
 ### Phase 3: Remove from Music.app
 
 Remove archived tracks from Music.app's library index. Moves the original file to Trash as a safety net.
 
 ```bash
-# List tracks to remove (from phase 2 output)
-python archive.py --input audit.tsv --classes voice_memo --execute 2>&1 | grep "tracks_to_remove"
+# Use the tracks_to_remove file from your completed phase 2 run
+# (its path is printed at the end of archive.py --execute)
 
 # Dry-run: show what would be removed
 python remove_library.py --input tracks_to_remove_YYYYMMDD_HHMMSS.txt
@@ -199,6 +201,8 @@ filepath                           | new_artist      | new_title | clear_album |
 See `docs/examples/phase4_fixes.tsv` for a template.
 
 > **Run `--execute` on your fixes file, not the preview.** The preview has extra columns for review only; `fix_tags.py` refuses to use it as input.
+>
+> The whole fixes file is checked before any tag is written: 4 or 5 tab-separated columns in the order above, `clear_album` of `0`, `1` or empty, and an optional header row naming those columns. If any row is wrong, nothing is written.
 
 Supported formats: MP3, M4A, FLAC, WAV and AIFF.
 
@@ -374,6 +378,7 @@ Priority 6: clean            → None of the above — leave in library
 - **No Music.app needed** — Phases 1, 2, and 4 work without Music.app open.
 - **iTunes XML export** — Optional; library scanning uses file system directly.
 - **Not a duplicate-song finder** — Archive collisions are checked by exact file contents, so different encodes or edits of the same song are treated as different files. There's no audio fingerprinting.
+- **Phase 3 has no automated live test** — The tests check the AppleScript it generates, not a run against a real Music library. Try phase 3 on a disposable test library first (hold Option while opening Music to create one), then on a few tracks of your real library before a full run.
 - **iCloud Music Library / Sync Library** — Not tested. Deleting from your library may also remove items from other devices.
 - **Heuristic classification** — Long duration, filename keywords and folder names are signals, not proof. Genuine music can be flagged, so review the audit before archiving, and pass `--classes` to archive only the categories you've checked.
 

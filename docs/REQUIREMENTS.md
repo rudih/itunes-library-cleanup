@@ -4,6 +4,8 @@
 **Date:** 2026-03-21
 **Status:** Agreed — ready for implementation
 
+> **Note:** This is the original requirements spec. Where it differs from the README or the code, those are authoritative. Notably, the summary report and run log are currently written by phase 3 only, and phase 2 deletes originals permanently once their archive copy is verified.
+
 ---
 
 ## 1. Background & Problem Statement

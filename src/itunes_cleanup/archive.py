@@ -15,6 +15,7 @@ CLI (phase 2):
 import argparse
 import csv
 import hashlib
+import os
 import re
 import shutil
 import sys
@@ -79,6 +80,12 @@ def resolve_destination(source: Path, dest_dir: Path) -> tuple[Path, str]:
     suffix = source.suffix
     n = 0
     while candidate.exists():
+        # The "existing copy" must be a separate file. If it is the source
+        # itself (dest_dir is the source's folder, or a symlink/hard link to
+        # it), there is no archive copy, so treating it as "already
+        # archived" would queue the only copy for removal.
+        if os.path.samefile(source, candidate):
+            raise ValueError(f"Archive destination {candidate} is the source file itself")
         # Size is a cheap pre-check; only hash when sizes match.
         if candidate.stat().st_size == source.stat().st_size and verify_copy(source, candidate):
             return candidate, "skip"
@@ -150,6 +157,21 @@ def copy_and_verify(source: Path, dest_dir: Path) -> dict:
     return result
 
 
+def check_destinations(dest_dirs, library_root: Path) -> list[str]:
+    """
+    Return an error message for each archive destination that lies inside
+    the music library. Archiving into the library would leave the "archive"
+    copy where the cleanup (and Music.app) can still find and remove it.
+    """
+    root = library_root.expanduser().resolve()
+    errors = []
+    for d in dest_dirs:
+        resolved = Path(d).expanduser().resolve()
+        if resolved == root or root in resolved.parents:
+            errors.append(f"Archive destination {d} is inside the library ({library_root})")
+    return errors
+
+
 # ---------------------------------------------------------------------------
 # Destination map
 # ---------------------------------------------------------------------------
@@ -183,6 +205,13 @@ def main():
     unknown = wanted - set(DEST_MAP)
     if unknown:
         print(f"Error: unknown class(es): {', '.join(unknown)}", file=sys.stderr)
+        sys.exit(1)
+
+    dest_errors = check_destinations({DEST_MAP[c] for c in wanted}, config.LIBRARY_ROOT)
+    if dest_errors:
+        for e in dest_errors:
+            print(f"Error: {e}", file=sys.stderr)
+        print("Change the ARCHIVE_* paths in config.py / local_config.py.", file=sys.stderr)
         sys.exit(1)
 
     rows = list(csv.DictReader(open(args.input), delimiter="\t"))

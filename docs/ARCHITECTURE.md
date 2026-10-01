@@ -10,7 +10,7 @@ This document explains the design philosophy, phase workflow, classification rul
 2. **Human Inspection** — Data flows through TSV files. Users can inspect, filter, edit, and re-run with confidence.
 3. **Safety First** — All destructive operations default to dry-run. Explicit `--execute` required. Hash verification before deletion. Phase 3 moves files to the Trash; phase 2 deletes originals permanently once their archive copy is verified.
 4. **Filesystem Truth** — Direct file traversal + mutagen for ground truth, not iTunes XML (which can become stale).
-5. **Comprehensive Logging** — Every run is logged. Audit trail persists in `run_log.tsv`.
+5. **Logging** — Phase 3 writes a summary file and appends to `run_log.tsv`. Phases 2 and 4 print per-file results to the terminal; phase 2 also writes the `tracks_to_remove` list.
 
 ---
 
@@ -51,7 +51,7 @@ This document explains the design philosophy, phase workflow, classification rul
 ┌──────────────────────────────────────────────────────────┐
 │ Phase 4: FIX TAGS (Optional)                            │
 │ Input:  phase4_fixes.tsv (user-created TSV)            │
-│ Output: summary_*.txt + modified files                  │
+│ Output: modified files + terminal report                │
 │ Role:   Direct mutagen write to fix URL-contaminated    │
 │         metadata                                         │
 │ Time:   <1 min for 50-100 files                        │
@@ -61,7 +61,7 @@ This document explains the design philosophy, phase workflow, classification rul
 └──────────────────────────────────────────────────────────┘
                         ↓
 ┌──────────────────────────────────────────────────────────┐
-│ Phase 5: SUMMARY & LOG (Auto)                           │
+│ Phase 5: SUMMARY & LOG (written by phase 3)             │
 │ Output: summary_*.txt (human-readable)                  │
 │         run_log.tsv (persistent append)                 │
 │ Role:   Generate summary report + update run log        │
@@ -248,20 +248,7 @@ def hash_file(path: Path, chunk_size=1024*1024) -> str:
 
 ### Output
 
-**summary_YYYYMMDD_HHMMSS.txt** (human-readable)
-```
-Phase: archive
-Timestamp: 2026-03-22 15:30:45
-Files processed: 120
-Files archived: 120
-Files verified: 120
-Files failed: 0
-Files skipped: 0
-Total data moved: 1,500 MB
-Duration: 7 min 34 sec
-
-Errors: None
-```
+Per-file results (`COPIED`, `SKIPPED`, `RENAMED`, `FAILED`) and totals are printed to the terminal.
 
 **tracks_to_remove_YYYYMMDD_HHMMSS.txt** (file paths, one per line)
 ```
@@ -270,11 +257,7 @@ Errors: None
 ...
 ```
 
-**run_log.tsv** (persistent append)
-```
-timestamp | phase | processed | archived | verified | failed | skipped | data_mb | duration_s
-2026-03-22T15:30:45 | archive | 120 | 120 | 120 | 0 | 0 | 1500 | 454
-```
+Only sources that were copied and verified, or that already have an identical copy in the archive, are listed.
 
 ---
 
@@ -327,14 +310,17 @@ Directly modify audio file metadata to fix URL-contaminated tags. Useful for fil
 ```python
 python fix_tags.py --input phase4_fixes.tsv
 # Output: fix_tags_preview_YYYYMMDD_HHMMSS.tsv
-# User inspects preview and may edit it
+# User inspects the preview (review only — it is not valid input)
+# To change anything, edit phase4_fixes.tsv and dry-run again
 ```
 
 **Stage 2: Execute**
 ```python
-python fix_tags.py --input fix_tags_preview_YYYYMMDD_HHMMSS.tsv --execute
+python fix_tags.py --input phase4_fixes.tsv --execute
+# The whole input file is validated first (column count/order, clear_album
+# values, preview files rejected); nothing is written if any row is invalid
 # Files are modified directly via mutagen
-# Output: summary_*.txt with counts
+# Output: per-file results in the terminal; exit code 1 if any file failed
 ```
 
 ### Input Format (TSV)
@@ -381,41 +367,33 @@ audio.save()
 
 ## Phase 5: Summary & Logging
 
+Currently written by phase 3 (`remove_library.py`) only, via `summary.py`.
+
 ### Summary Report (Human-Readable)
 
 **summary_YYYYMMDD_HHMMSS.txt**
 ```
-==================================================
-Phase: archive
-Timestamp: 2026-03-22T15:30:45
-==================================================
+============================================================
+itunes_cleanup — REMOVE_LIBRARY run
+Started:  2026-03-22 15:30:45
+Duration: 1m 34s
+============================================================
+  Files processed      : 120
+  Removed from library : 118
+  Moved to Trash       : 0
+  Not found in library : 2
+  Errors               : 0
 
-Overview:
-  Files processed: 120
-  Files archived: 120
-  Files verified: 120
-  Files failed: 0
-  Files skipped: 0
-
-Data Movement:
-  Total bytes moved: 1,572,864,000
-  Total MB moved: 1,500.00
-  Duration: 7 min 34 sec
-
-Errors: None reported.
-
-==================================================
+No errors.
+============================================================
 ```
 
 ### Persistent Run Log (Machine-Readable)
 
 **run_log.tsv** (append-only)
 ```
-timestamp | phase | processed | archived | verified | failed | skipped | tags_fixed | data_mb | duration_s
-2026-03-20T10:15:22 | audit | 2000 | | | | | | | 60
-2026-03-20T10:20:31 | archive | 200 | 200 | 200 | 0 | 0 | | 1000 | 300
-2026-03-20T10:25:45 | remove_library | 200 | | | | | | | 90
-2026-03-21T14:33:12 | fix_tags | | | | | | 25 | | 15
+timestamp | phase | processed | copied | skipped | renamed | verified | failed | deleted | tags_fixed | removed_from_library | trashed | not_found | data_mb | duration_s | error_count
+2026-03-22 15:30:45 | remove_library | 120 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 118 | 0 | 2 | 0.0 | 94 | 0
 ```
 
 Used for tracking long-term cleanup progress across multiple runs.
@@ -503,10 +481,10 @@ python archive.py --input audit.tsv --execute
 ### 5. Audit Trail (Persistent Logging)
 
 ```
-run_log.tsv (append-only) — tracks all operations across sessions
+run_log.tsv (append-only) — one line per phase 3 run, across sessions
 ```
 
-**Guarantees:** Complete history; useful for debugging and understanding what happened.
+**Limits:** Only phase 3 is logged here. Keep the terminal output of phase 2 and phase 4 runs (and the `tracks_to_remove` files) if you want a record of them.
 
 ---
 

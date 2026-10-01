@@ -4,8 +4,9 @@
 
 Safe, tested Python tool that cleans an iTunes/Apple Music library: archives voice memos,
 production bounces, and long-form audio (10+ min mixes/podcasts), fixes URL-contaminated tags,
-and removes stale entries from Music.app — with hash verification, dry-run defaults, and
-archive-not-delete throughout. Developed against a real, long-lived personal library.
+and removes stale entries from Music.app — with dry-run defaults and SHA-256-verified archive
+copies. Note: phase 2 permanently deletes each original once its archive copy is verified (not to
+Trash); only phase 3 uses the Trash. Developed against a real, long-lived personal library.
 
 ## Layout
 

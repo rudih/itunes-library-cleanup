@@ -187,6 +187,26 @@ class TestParseTsv:
         with pytest.raises(ValueError, match="preview"):
             fix_tags.parse_fixes_tsv(preview)
 
+    def test_rejects_preview_with_byte_order_mark(self, tmp_path):
+        # Regression: a BOM before "filepath" hid the header from the
+        # preview check, so the preview was parsed positionally.
+        fixes = [{"filepath": "/a/track.mp3", "new_artist": "New Artist",
+                  "new_title": "New Title", "clear_album": "1"}]
+        preview = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        bom = tmp_path / "bom_preview.tsv"
+        bom.write_bytes(b"\xef\xbb\xbf" + preview.read_bytes())
+        with pytest.raises(ValueError, match="preview"):
+            fix_tags.parse_fixes_tsv(bom)
+
+    def test_rejects_preview_rows_without_header(self, tmp_path):
+        # Even with the header deleted, preview rows have too many columns
+        fixes = [{"filepath": "/a/track.mp3", "new_artist": "X", "new_title": "Y", "clear_album": "1"}]
+        preview = fix_tags.generate_preview_tsv(fixes, tmp_path)
+        headless = tmp_path / "headless.tsv"
+        headless.write_text("".join(preview.read_text().splitlines(keepends=True)[1:]))
+        with pytest.raises(ValueError):
+            fix_tags.parse_fixes_tsv(headless)
+
     def test_skips_blank_lines(self, tmp_path):
         tsv = tmp_path / "fixes.tsv"
         tsv.write_text("/a/b/track.mp3\tArtist\tTitle\t1\n\n/c/d/other.mp3\tX\tY\t0\n")
@@ -199,11 +219,46 @@ class TestParseTsv:
         rows = fix_tags.parse_fixes_tsv(tsv)
         assert len(rows) == 1
 
-    def test_skips_rows_with_fewer_than_four_fields(self, tmp_path):
+    def test_rejects_rows_with_fewer_than_four_fields(self, tmp_path):
         tsv = tmp_path / "fixes.tsv"
         tsv.write_text("/a/b/track.mp3\tArtist\tTitle\n")  # only 3 fields
-        rows = fix_tags.parse_fixes_tsv(tsv)
-        assert len(rows) == 0
+        with pytest.raises(ValueError, match="line 1"):
+            fix_tags.parse_fixes_tsv(tsv)
+
+    def test_rejects_rows_with_extra_fields(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("/a/b/track.mp3\tA\tT\t1\tHouse\textra\n")
+        with pytest.raises(ValueError, match="columns"):
+            fix_tags.parse_fixes_tsv(tsv)
+
+    def test_bad_row_rejects_whole_file(self, tmp_path):
+        # Nothing is returned (so nothing is written) if any row is invalid
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("/a/ok.mp3\tA\tT\t1\n/a/bad.mp3\tA\tT\tmaybe\n")
+        with pytest.raises(ValueError, match="clear_album"):
+            fix_tags.parse_fixes_tsv(tsv)
+
+    def test_rejects_empty_filepath(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("\tA\tT\t1\n")
+        with pytest.raises(ValueError, match="filepath"):
+            fix_tags.parse_fixes_tsv(tsv)
+
+    def test_rejects_reordered_header(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("filepath\tnew_title\tnew_artist\tclear_album\n/a/t.mp3\tT\tA\t1\n")
+        with pytest.raises(ValueError, match="header"):
+            fix_tags.parse_fixes_tsv(tsv)
+
+    def test_accepts_header_with_genre(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_text("filepath\tnew_artist\tnew_title\tclear_album\tnew_genre\n/a/t.mp3\tA\tT\t1\tHouse\n")
+        assert fix_tags.parse_fixes_tsv(tsv)[0]["new_genre"] == "House"
+
+    def test_byte_order_mark_is_ignored(self, tmp_path):
+        tsv = tmp_path / "fixes.tsv"
+        tsv.write_bytes(b"\xef\xbb\xbf" + "/a/t.mp3\tA\tT\t1\n".encode())
+        assert fix_tags.parse_fixes_tsv(tsv)[0]["filepath"] == "/a/t.mp3"
 
     def test_empty_artist_field_allowed(self, tmp_path):
         tsv = write_tsv(tmp_path / "fixes.tsv", [

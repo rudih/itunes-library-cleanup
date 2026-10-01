@@ -180,38 +180,59 @@ FIELDNAMES = ["filepath", "new_artist", "new_title", "clear_album", "new_genre"]
 
 def parse_fixes_tsv(tsv_path: Path) -> list[dict]:
     """
-    Parse a fixes TSV file (same format as phase4_fixes.tsv).
-    Returns a list of dicts with keys: filepath, new_artist, new_title,
-    clear_album, new_genre. The new_genre column is optional.
-    Skips blank lines, lines starting with #, and a header row.
+    Parse and validate a fixes TSV file (same format as phase4_fixes.tsv).
 
-    Raises ValueError if the file is a preview TSV written by a dry run:
-    its columns are in a different order, so treating it as input would
-    write current values into the wrong tags.
+    Columns, in this order: filepath, new_artist, new_title, clear_album,
+    and optionally new_genre. Blank lines and lines starting with # are
+    skipped; an optional header row must name exactly those columns.
+
+    Returns a list of dicts keyed by FIELDNAMES (new_genre defaults to "").
+
+    The whole file is validated before anything is returned, and any problem
+    raises ValueError: a dry-run preview file, reordered or unknown header
+    columns, a row with the wrong number of columns, an empty filepath, or a
+    clear_album value other than 0, 1 or empty. Columns are positional, so a
+    file in any other shape would write values into the wrong tags.
     """
     rows = []
-    with open(tsv_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.rstrip("\n")
-            if not line or line.startswith("#"):
+    # utf-8-sig strips a byte-order mark that some editors add
+    with open(tsv_path, encoding="utf-8-sig") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.rstrip("\r\n")
+            if not line.strip() or line.lstrip().startswith("#"):
                 continue
             parts = line.split("\t")
-            if parts[0].strip().lower() == "filepath":
-                if "current_artist" in (c.strip().lower() for c in parts):
+            names = [c.strip().lower() for c in parts]
+
+            if names[0] == "filepath":
+                if "current_artist" in names:
                     raise ValueError(
                         f"{tsv_path} is a dry-run preview, not a fixes file. "
                         "Edit your original fixes TSV and run --execute on that."
                     )
-                continue  # header row
-            if len(parts) < 4:
+                if names not in (FIELDNAMES[:4], FIELDNAMES):
+                    raise ValueError(
+                        f"{tsv_path} line {lineno}: header must be "
+                        f"{' | '.join(FIELDNAMES[:4])} [| new_genre], in that order; "
+                        f"got {' | '.join(parts)}"
+                    )
                 continue
-            rows.append({
-                "filepath":    parts[0].strip(),
-                "new_artist":  parts[1].strip(),
-                "new_title":   parts[2].strip(),
-                "clear_album": parts[3].strip(),
-                "new_genre":   parts[4].strip() if len(parts) > 4 else "",
-            })
+
+            if len(parts) not in (4, 5):
+                raise ValueError(
+                    f"{tsv_path} line {lineno}: expected 4 or 5 tab-separated "
+                    f"columns, got {len(parts)}"
+                )
+            values = [c.strip() for c in parts] + [""] * (5 - len(parts))
+            row = dict(zip(FIELDNAMES, values))
+            if not row["filepath"]:
+                raise ValueError(f"{tsv_path} line {lineno}: filepath is empty")
+            if row["clear_album"] not in {"0", "1", ""}:
+                raise ValueError(
+                    f"{tsv_path} line {lineno}: clear_album must be 0, 1 or empty, "
+                    f"got {row['clear_album']!r}"
+                )
+            rows.append(row)
     return rows
 
 
@@ -330,6 +351,7 @@ def main():
         print("\nErrors:")
         for e in errors:
             print(f"  {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
